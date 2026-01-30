@@ -30,8 +30,10 @@ function registerSocketHandlers(io) {
       try {
         const game = createGame();
         socket.join(game.gameId);
-        if (typeof callback === "function") callback({ gameId: game.gameId, game });
-        broadcastGameState(io, game.gameId, game);
+        const updated = joinGame(game.gameId, socket.id, 1);
+        if (typeof callback === "function")
+          callback({ gameId: game.gameId, game: updated || game });
+        broadcastGameState(io, game.gameId, updated || game);
       } catch (e) {
         if (typeof callback === "function")
           callback({ error: e.message || "Failed to create game" });

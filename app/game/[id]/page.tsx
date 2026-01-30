@@ -203,6 +203,7 @@ export default function GamePage() {
               teams={teams}
               currentTeamId={game.wheelTeamId}
               isMyTurn={isMyTurn}
+              gameId={gameId}
               onSpin={handleSpin}
             />
           </div>

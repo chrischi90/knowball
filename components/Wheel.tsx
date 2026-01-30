@@ -1,23 +1,50 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import type { NBATeam } from "@/lib/nba-api";
 
 type WheelProps = {
   teams: NBATeam[];
   currentTeamId: string | null;
   isMyTurn: boolean;
+  gameId: string;
   onSpin: (callback: (result: { teamIndex: number }) => void) => void;
 };
 
 const SEGMENT_DEG = 360 / 30;
 
-export function Wheel({ teams, currentTeamId, isMyTurn, onSpin }: WheelProps) {
+// Seeded random number generator for stable colors
+function seededRandom(seed: string, index: number): number {
+  const str = seed + index.toString();
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash % 1000) / 1000;
+}
+
+function getRandomColor(gameId: string, teamIndex: number): string {
+  const hue = seededRandom(gameId, teamIndex) * 360;
+  return `hsl(${hue}, 70%, 40%)`;
+}
+
+export function Wheel({ teams, currentTeamId, isMyTurn, gameId, onSpin }: WheelProps) {
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [landedIndex, setLandedIndex] = useState<number | null>(null);
   const wheelRef = useRef<HTMLDivElement>(null);
   const prevTeamIdRef = useRef<string | null>(null);
+  
+  // Memoize stable colors per session
+  const colorMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    teams.forEach((team, idx) => {
+      map[team.id] = getRandomColor(gameId, idx);
+    });
+    return map;
+  }, [gameId, teams.length]);
 
   // When game state sets currentTeamId (e.g. other player sees the result), animate to it
   useEffect(() => {
@@ -87,6 +114,8 @@ export function Wheel({ teams, currentTeamId, isMyTurn, onSpin }: WheelProps) {
   }
 
   const displayTeams = teams.slice(0, 30);
+  const wheelSize = 384; // 96 * 4 for responsive sizing
+  const radius = wheelSize / 2;
 
   return (
     <div className="rounded-xl bg-slate-800 p-4">
@@ -97,37 +126,61 @@ export function Wheel({ teams, currentTeamId, isMyTurn, onSpin }: WheelProps) {
             ? "Spinning…"
             : "Waiting for your turn"}
       </p>
-      <div className="relative mx-auto w-72 h-72">
+      <div className="relative mx-auto w-full max-w-xl aspect-square">
         <div
           className="absolute inset-0 rounded-full border-4 border-orange-500 overflow-hidden"
           style={{ transform: "rotate(0deg)" }}
         >
-          <div
-            ref={wheelRef}
-            className="absolute inset-0 rounded-full transition-none"
+          <svg
+            ref={wheelRef as any}
+            viewBox={`0 0 ${wheelSize} ${wheelSize}`}
+            className="absolute inset-0 w-full h-full transition-none"
             style={{
               transform: `rotate(${rotation}deg)`,
               willChange: "transform",
             }}
           >
-            {displayTeams.map((team, i) => (
-              <div
-                key={team.id}
-                className="absolute left-1/2 top-0 w-1/2 h-full origin-left"
-                style={{
-                  transform: `rotate(${i * SEGMENT_DEG}deg)`,
-                  background: `linear-gradient(to right, hsl(${220 + i * 2}, 60%, 35%), hsl(${220 + i * 2}, 50%, 25%))`,
-                }}
-              >
-                <span
-                  className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-medium text-white whitespace-nowrap truncate max-w-[80%]"
-                  style={{ transform: "rotate(90deg)", transformOrigin: "left center" }}
-                >
-                  {team.abbreviation}
-                </span>
-              </div>
-            ))}
-          </div>
+            {displayTeams.map((team, i) => {
+              const startAngle = (i * 360) / displayTeams.length - 90;
+              const endAngle = ((i + 1) * 360) / displayTeams.length - 90;
+              const startRad = (startAngle * Math.PI) / 180;
+              const endRad = (endAngle * Math.PI) / 180;
+              const x1 = radius + radius * Math.cos(startRad);
+              const y1 = radius + radius * Math.sin(startRad);
+              const x2 = radius + radius * Math.cos(endRad);
+              const y2 = radius + radius * Math.sin(endRad);
+              const largeArc = 360 / displayTeams.length > 180 ? 1 : 0;
+              const pathData = `M ${radius} ${radius} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+              
+              const midAngle = ((startAngle + endAngle) / 2 * Math.PI) / 180;
+              const labelRadius = radius * 0.7;
+              const labelX = radius + labelRadius * Math.cos(midAngle);
+              const labelY = radius + labelRadius * Math.sin(midAngle);
+              
+              return (
+                <g key={team.id}>
+                  <path
+                    d={pathData}
+                    fill={colorMap[team.id] || "hsl(220, 70%, 40%)"}
+                    stroke="rgba(255,255,255,0.1)"
+                    strokeWidth="1"
+                  />
+                  <text
+                    x={labelX}
+                    y={labelY}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fill="white"
+                    fontSize="12"
+                    fontWeight="600"
+                    pointerEvents="none"
+                  >
+                    {team.abbreviation}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
         </div>
         <div
           className="absolute -top-2 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[12px] border-r-[12px] border-t-[20px] border-l-transparent border-r-transparent border-t-orange-500 z-10"
