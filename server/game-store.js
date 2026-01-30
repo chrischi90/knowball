@@ -106,6 +106,20 @@ function setSimulationResult(gameId, result) {
   return game;
 }
 
+function rematchGame(gameId) {
+  const game = games.get(gameId);
+  if (!game || !game.player1 || !game.player2) return null;
+  // Reset game state but keep players
+  game.phase = "lobby";
+  game.currentTurn = 1;
+  game.wheelTeamId = null;
+  game.wheelTeamName = null;
+  game.rosters = { 1: createEmptyRosterJS(), 2: createEmptyRosterJS() };
+  game.takenPlayerIds = [];
+  game.simulationResult = null;
+  return game;
+}
+
 module.exports = {
   createGame,
   getGame,
@@ -114,5 +128,6 @@ module.exports = {
   spinWheel,
   pickPlayer,
   setSimulationResult,
+  rematchGame,
   POSITIONS,
 };

@@ -3,7 +3,8 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useCallback } from "react";
 import { getSocket } from "@/lib/socket";
-import type { GameState, NBATeam } from "@/lib/game-types";
+import type { GameState } from "@/lib/game-types";
+import type { NBATeam } from "@/lib/nba-api";
 import { Wheel } from "@/components/Wheel";
 import { PlayerList } from "@/components/PlayerList";
 import { RosterGrid } from "@/components/RosterGrid";
@@ -117,6 +118,14 @@ export default function GamePage() {
       setError(e instanceof Error ? e.message : "Simulation failed");
     }
   }, [game, gameId]);
+
+  const handleRematch = useCallback(() => {
+    const socket = getSocket();
+    socket.emit("rematch", { gameId }, (res: { game?: GameState; error?: string }) => {
+      if (res.error) setError(res.error);
+      if (res.game) setGame(res.game);
+    });
+  }, [gameId]);
 
   if (!gameId) {
     return (
@@ -243,6 +252,8 @@ export default function GamePage() {
             result={game.simulationResult}
             roster1={game.rosters[1]}
             roster2={game.rosters[2]}
+            gameId={gameId}
+            onRematch={handleRematch}
           />
         )}
       </div>

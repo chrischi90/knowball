@@ -6,6 +6,7 @@ const {
   spinWheel,
   pickPlayer,
   setSimulationResult,
+  rematchGame,
   POSITIONS,
 } = require("./game-store.js");
 
@@ -199,6 +200,23 @@ function registerSocketHandlers(io) {
       if (!game) return;
       const updated = setSimulationResult(gameId, result);
       if (updated) broadcastGameState(io, gameId, updated);
+    });
+
+    socket.on("rematch", ({ gameId }, callback) => {
+      const game = getGame(gameId);
+      if (!game) {
+        if (typeof callback === "function")
+          callback({ error: "Game not found" });
+        return;
+      }
+      const updated = rematchGame(gameId);
+      if (!updated) {
+        if (typeof callback === "function")
+          callback({ error: "Could not start rematch" });
+        return;
+      }
+      if (typeof callback === "function") callback({ game: updated });
+      broadcastGameState(io, gameId, updated);
     });
   });
 }
