@@ -1,0 +1,50 @@
+/**
+ * Shared game types for client and server.
+ */
+
+export const POSITIONS = ["PG", "SG", "SF", "PF", "C"] as const;
+export type Position = (typeof POSITIONS)[number];
+
+export type GamePhase = "lobby" | "drafting" | "simulation" | "completed";
+
+export type RosterSlot = {
+  position: Position;
+  playerId: string | null;
+  playerName: string | null;
+};
+
+export type Roster = Record<Position, RosterSlot>;
+
+export function createEmptyRoster(): Roster {
+  return {
+    PG: { position: "PG", playerId: null, playerName: null },
+    SG: { position: "SG", playerId: null, playerName: null },
+    SF: { position: "SF", playerId: null, playerName: null },
+    PF: { position: "PF", playerId: null, playerName: null },
+    C: { position: "C", playerId: null, playerName: null },
+  };
+}
+
+export type GameState = {
+  gameId: string;
+  phase: GamePhase;
+  player1: { socketId: string; name?: string } | null;
+  player2: { socketId: string; name?: string } | null;
+  currentTurn: 1 | 2; // 1 or 2
+  wheelTeamId: string | null;
+  wheelTeamName: string | null;
+  rosters: { 1: Roster; 2: Roster };
+  takenPlayerIds: string[];
+  simulationResult: {
+    winner: 1 | 2 | null;
+    team1Score: number;
+    team2Score: number;
+    team1Stats?: Record<string, number>;
+    team2Stats?: Record<string, number>;
+  } | null;
+};
+
+export type SimulationInput = {
+  roster1: Roster;
+  roster2: Roster;
+};
