@@ -91,3 +91,41 @@ git push -u origin main
 ```
 
 Done. Your code will be in the private repo.
+
+---
+
+## Fix: "Permission denied (publickey)" on push
+
+This happens when your remote uses **SSH** (`git@github.com:...`) but you don't have an SSH key set up (or GitHub doesn't have it). Easiest fix: **use HTTPS instead**.
+
+**1. See your current remote:**
+
+```powershell
+git remote -v
+```
+
+You’ll see something like `origin  git@github.com:USERNAME/REPO.git`.
+
+**2. Switch the remote to HTTPS** (replace `USERNAME` and `REPO` with your GitHub username and repo name):
+
+```powershell
+git remote set-url origin https://github.com/USERNAME/REPO.git
+```
+
+Example: `git remote set-url origin https://github.com/chris/nba-roster-wheel.git`
+
+**3. Push again:**
+
+```powershell
+git push -u origin main
+```
+
+**4. When PowerShell asks for credentials:**
+
+- **Username:** your GitHub username  
+- **Password:** a **Personal Access Token** (not your GitHub password)  
+  - On GitHub: **Settings** → **Developer settings** → **Personal access tokens** → **Tokens (classic)** → **Generate new token**  
+  - Check the **repo** scope, generate, then **copy the token**  
+  - Paste that token when Git asks for "Password"
+
+After this, push will use HTTPS and your token, and the "Permission denied (publickey)" error goes away.

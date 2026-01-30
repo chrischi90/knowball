@@ -2,7 +2,8 @@
 
 Two-player online NBA roster draft game: spin a wheel of teams, pick players from the landed team for your roster (PG, SG, SF, PF, C), then run a stats-based simulation to determine a winner.
 
-**On Windows?** See **[WINDOWS_SETUP.md](WINDOWS_SETUP.md)** for a step-by-step walkthrough.
+**On Windows?** See **[WINDOWS_SETUP.md](WINDOWS_SETUP.md)** for a step-by-step walkthrough.  
+**On Mac?** See **[MAC_SETUP.md](MAC_SETUP.md)** for macOS (MacBook Pro, Apple Silicon or Intel).
 
 ## Stack
 
@@ -12,9 +13,9 @@ Two-player online NBA roster draft game: spin a wheel of teams, pick players fro
 
 ## Prerequisites
 
-- Node.js 18+
-- Python 3.10+
-- npm
+- **Node.js** 18+ (LTS recommended) — [nodejs.org](https://nodejs.org) or `brew install node` on Mac
+- **Python** 3.10+ — [python.org](https://www.python.org/downloads/) or `brew install python@3.12` on Mac (on Windows, use 3.10–3.12; see [WINDOWS_SETUP.md](WINDOWS_SETUP.md))
+- **npm** (included with Node.js)
 
 ## Setup
 
@@ -22,9 +23,9 @@ Two-player online NBA roster draft game: spin a wheel of teams, pick players fro
 
 ```bash
 cd nba-service
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
+python3 -m venv .venv
+# Windows (PowerShell):  .\.venv\Scripts\Activate.ps1
+# macOS / Linux:        source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```

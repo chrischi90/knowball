@@ -1,4 +1,4 @@
-# Use Python 3.10, 3.11, or 3.12. Python 3.14 has no pre-built Windows wheels for numpy.
+# Python 3.10+ (on Windows use 3.10–3.12; 3.14 often lacks pre-built numpy wheels there).
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 nba_api>=1.4
