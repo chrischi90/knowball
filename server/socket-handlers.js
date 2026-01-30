@@ -104,7 +104,7 @@ function registerSocketHandlers(io) {
       broadcastGameState(io, gameId, updated);
     });
 
-    socket.on("spin", (callback) => {
+    socket.on("spin", (result, callback) => {
       const gameId = Array.from(socket.rooms).find(
         (r) => r !== socket.id && r.length === 8
       );
@@ -124,31 +124,26 @@ function registerSocketHandlers(io) {
           callback({ error: "Pick a player first" });
         return;
       }
-      // Server picks random team; client will animate to this index
-      const teams = game._teamsCache || [];
-      if (teams.length === 0) {
+      // Client sends the result from the wheel spin
+      const { teamId, teamName } = result;
+      if (!teamId || !teamName) {
         if (typeof callback === "function")
-          callback({ error: "Teams not loaded" });
+          callback({ error: "Invalid spin result" });
         return;
       }
-      const index = Math.floor(Math.random() * teams.length);
-      const team = teams[index];
-      const updated = spinWheel(gameId, team.id, team.full_name);
+      const updated = spinWheel(gameId, teamId, teamName);
       if (!updated) {
         if (typeof callback === "function")
           callback({ error: "Could not spin" });
         return;
       }
+      // Broadcast to other players so they see the result
       socket.to(gameId).emit("wheel_result", {
-        teamId: team.id,
-        teamName: team.full_name,
-        teamIndex: index,
+        teamId,
+        teamName,
       });
       if (typeof callback === "function")
         callback({
-          teamId: team.id,
-          teamName: team.full_name,
-          teamIndex: index,
           game: updated,
         });
       broadcastGameState(io, gameId, updated);

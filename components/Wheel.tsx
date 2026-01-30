@@ -8,54 +8,67 @@ type WheelProps = {
   currentTeamId: string | null;
   isMyTurn: boolean;
   gameId: string;
-  onSpin: (callback: (result: { teamIndex: number }) => void) => void;
+  onSpin: (result: { teamIndex: number; teamId: string; teamName: string }) => void;
 };
 
 const SEGMENT_DEG = 360 / 30;
 
-// Seeded random number generator for stable colors
-function seededRandom(seed: string, index: number): number {
-  const str = seed + index.toString();
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash;
-  }
-  return Math.abs(hash % 1000) / 1000;
-}
+// NBA Official Team Colors (primary colors)
+const NBA_TEAM_COLORS: Record<string, string> = {
+  ATL: "#E03C3C", BOS: "#007A33", BKN: "#000000", CHA: "#00778D",
+  CHI: "#CE1141", CLE: "#6F263D", DAL: "#002B80", DEN: "#0E2240",
+  DET: "#0076B6", GSW: "#1D428A", HOU: "#CE1141", LAC: "#1D1160",
+  LAL: "#552583", MEM: "#12173F", MIA: "#98002E", MIL: "#00471B",
+  MIN: "#0C2340", NOP: "#0C2340", NYK: "#006BB6", OKC: "#007AC1",
+  ORL: "#0077B6", PHI: "#1D1F2E", PHX: "#1D1D1D", POR: "#E03C3C",
+  SAC: "#5A2D81", SAS: "#C4CED4", TOR: "#B4302B", UTA: "#F9423A",
+  WAS: "#002B81", IND: "#002D62",
+};
 
-function getRandomColor(gameId: string, teamIndex: number): string {
-  const hue = seededRandom(gameId, teamIndex) * 360;
-  return `hsl(${hue}, 70%, 40%)`;
+function getTeamColor(abbreviation: string): string {
+  return NBA_TEAM_COLORS[abbreviation] || "#4B5563";
 }
 
 export function Wheel({ teams, currentTeamId, isMyTurn, gameId, onSpin }: WheelProps) {
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [landedIndex, setLandedIndex] = useState<number | null>(null);
+  const [showResult, setShowResult] = useState(false);
   const wheelRef = useRef<HTMLDivElement>(null);
   const prevTeamIdRef = useRef<string | null>(null);
   
-  // Memoize stable colors per session
+  // Memoize colors using official NBA team colors
   const colorMap = useMemo(() => {
     const map: Record<string, string> = {};
-    teams.forEach((team, idx) => {
-      map[team.id] = getRandomColor(gameId, idx);
+    teams.forEach((team) => {
+      map[team.id] = getTeamColor(team.abbreviation);
     });
     return map;
-  }, [gameId, teams.length]);
+  }, [teams.length, teams]);
 
-  // When game state sets currentTeamId (e.g. other player sees the result), animate to it
+  // Sync state when other player spins - just update the display
   useEffect(() => {
     if (!currentTeamId || teams.length === 0 || prevTeamIdRef.current === currentTeamId) return;
     prevTeamIdRef.current = currentTeamId;
     const idx = teams.findIndex((t) => t.id === currentTeamId);
     if (idx === -1) return;
+    
+    // Just update the landed index without animating (other player already animated)
+    setLandedIndex(idx);
+    setShowResult(true);
+  }, [currentTeamId, teams]);
+
+  const handleSpin = useCallback(() => {
+    if (!isMyTurn || spinning || teams.length === 0) return;
+    
     setSpinning(true);
+    setLandedIndex(null);
+    setShowResult(false);
+    
+    // Random spin - this determines the result
+    const randomDegrees = Math.random() * 360;
     const extraRotations = 4 * 360;
-    const segmentCenter = idx * SEGMENT_DEG + SEGMENT_DEG / 2;
-    const targetAngle = 360 - segmentCenter + extraRotations;
+    const totalRotation = extraRotations + randomDegrees;
     const duration = 4000;
     const start = performance.now();
     const startRotation = rotation;
@@ -64,46 +77,41 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, onSpin }: WheelP
       const elapsed = now - start;
       const progress = Math.min(elapsed / duration, 1);
       const easeOut = 1 - Math.pow(1 - progress, 3);
-      const current = startRotation + targetAngle * easeOut;
-      setRotation(current % 360);
+      const current = startRotation + totalRotation * easeOut;
+      const displayRotation = current % 360;
+      setRotation(displayRotation);
+      
       if (progress < 1) {
         requestAnimationFrame(animate);
       } else {
         setSpinning(false);
-        setLandedIndex(idx);
+        
+        // The arrow is at 0° (top). Find which segment is currently at that position.
+        // When wheel rotates by displayRotation degrees, the segment that was originally
+        // at angle (0 - displayRotation) is now at 0.
+        // Normalize that original angle to [0, 360)
+        const originalAngle = ((0 - displayRotation) % 360 + 360) % 360;
+        
+        // Segments start at -90°, so add 90° to shift to [0, 360) space
+        // Segment i spans from (i * SEGMENT_DEG - 90) to ((i+1) * SEGMENT_DEG - 90)
+        // In [0, 360) after adding 90: segment i spans from (i * SEGMENT_DEG) to ((i+1) * SEGMENT_DEG)
+        const shiftedAngle = (originalAngle + 90) % 360;
+        const segmentIndex = Math.floor(shiftedAngle / SEGMENT_DEG) % teams.length;
+        const landedTeam = teams[segmentIndex];
+        
+        setLandedIndex(segmentIndex);
+        setTimeout(() => setShowResult(true), 400);
+        
+        // Send the result to the server
+        onSpin({
+          teamIndex: segmentIndex,
+          teamId: landedTeam.id,
+          teamName: landedTeam.full_name
+        });
       }
     };
     requestAnimationFrame(animate);
-  }, [currentTeamId, teams]);
-
-  const handleSpin = useCallback(() => {
-    if (!isMyTurn || spinning || teams.length === 0) return;
-    setSpinning(true);
-    setLandedIndex(null);
-    onSpin(({ teamIndex }) => {
-      const extraRotations = 4 * 360;
-      const segmentCenter = teamIndex * SEGMENT_DEG + SEGMENT_DEG / 2;
-      const targetAngle = 360 - segmentCenter + extraRotations;
-      const duration = 4000;
-      const start = performance.now();
-      const startRotation = rotation;
-
-      const animate = (now: number) => {
-        const elapsed = now - start;
-        const progress = Math.min(elapsed / duration, 1);
-        const easeOut = 1 - Math.pow(1 - progress, 3);
-        const current = startRotation + targetAngle * easeOut;
-        setRotation(current % 360);
-        if (progress < 1) {
-          requestAnimationFrame(animate);
-        } else {
-          setSpinning(false);
-          setLandedIndex(teamIndex);
-        }
-      };
-      requestAnimationFrame(animate);
-    });
-  }, [isMyTurn, spinning, teams.length, onSpin, rotation]);
+  }, [isMyTurn, spinning, teams, rotation, onSpin]);
 
   if (teams.length === 0) {
     return (
@@ -114,8 +122,9 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, onSpin }: WheelP
   }
 
   const displayTeams = teams.slice(0, 30);
-  const wheelSize = 384; // 96 * 4 for responsive sizing
+  const wheelSize = 384;
   const radius = wheelSize / 2;
+  const labelRadius = radius * 0.65; // Slightly smaller to avoid center button
 
   return (
     <div className="rounded-xl bg-slate-800 p-4">
@@ -153,7 +162,6 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, onSpin }: WheelP
               const pathData = `M ${radius} ${radius} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
               
               const midAngle = ((startAngle + endAngle) / 2 * Math.PI) / 180;
-              const labelRadius = radius * 0.7;
               const labelX = radius + labelRadius * Math.cos(midAngle);
               const labelY = radius + labelRadius * Math.sin(midAngle);
               
@@ -161,7 +169,7 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, onSpin }: WheelP
                 <g key={team.id}>
                   <path
                     d={pathData}
-                    fill={colorMap[team.id] || "hsl(220, 70%, 40%)"}
+                    fill={colorMap[team.id] || "#4B5563"}
                     stroke="rgba(255,255,255,0.1)"
                     strokeWidth="1"
                   />
@@ -171,8 +179,8 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, onSpin }: WheelP
                     textAnchor="middle"
                     dominantBaseline="middle"
                     fill="white"
-                    fontSize="12"
-                    fontWeight="600"
+                    fontSize="13"
+                    fontWeight="700"
                     pointerEvents="none"
                   >
                     {team.abbreviation}
@@ -182,22 +190,36 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, onSpin }: WheelP
             })}
           </svg>
         </div>
+        
+        {/* Center Spin Button */}
+        <button
+          type="button"
+          onClick={handleSpin}
+          disabled={!isMyTurn || spinning}
+          className="absolute inset-0 flex items-center justify-center z-10"
+        >
+          <div className="w-20 h-20 rounded-full bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex items-center justify-center font-semibold text-white text-sm transition touch-manipulation"
+               style={{ pointerEvents: !isMyTurn || spinning ? "none" : "auto" }}>
+            {spinning ? "Spinning…" : "Spin"}
+          </div>
+        </button>
+        
+        {/* Arrow Indicator at ~3:10 position (100 degrees) */}
         <div
-          className="absolute -top-2 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[12px] border-r-[12px] border-t-[20px] border-l-transparent border-r-transparent border-t-orange-500 z-10"
+          className="absolute w-0 h-0 border-l-[12px] border-r-[12px] border-b-[20px] border-l-transparent border-r-transparent border-b-orange-500 z-10"
+          style={{
+            top: "50%",
+            right: "0px",
+            transform: "translateY(-50%) rotate(-90deg)",
+          }}
           aria-hidden
         />
       </div>
-      <button
-        type="button"
-        onClick={handleSpin}
-        disabled={!isMyTurn || spinning}
-        className="w-full mt-4 py-4 rounded-xl bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed font-semibold text-lg transition touch-manipulation min-h-[48px]"
-      >
-        {spinning ? "Spinning…" : "Spin"}
-      </button>
-      {landedIndex !== null && currentTeamId && (
-        <p className="text-center mt-3 text-orange-400 font-medium">
-          Landed on: {displayTeams[landedIndex]?.full_name}
+      
+      {/* Landed Team Result */}
+      {showResult && landedIndex !== null && (
+        <p className="text-center mt-6 text-orange-400 font-bold text-lg">
+          🎯 Landed on: {displayTeams[landedIndex]?.full_name}
         </p>
       )}
     </div>

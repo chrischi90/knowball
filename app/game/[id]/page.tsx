@@ -78,12 +78,11 @@ export default function GamePage() {
     });
   }, []);
 
-  const handleSpin = useCallback((callback: (result: { teamIndex: number }) => void) => {
+  const handleSpin = useCallback((result: { teamIndex: number; teamId: string; teamName: string }) => {
     const socket = getSocket();
-    socket.emit("spin", (res: { teamIndex?: number; game?: GameState; error?: string }) => {
+    socket.emit("spin", result, (res: { game?: GameState; error?: string }) => {
       if (res.error) setError(res.error);
       if (res.game) setGame(res.game);
-      if (res.teamIndex !== undefined && typeof callback === "function") callback({ teamIndex: res.teamIndex });
     });
   }, []);
 
