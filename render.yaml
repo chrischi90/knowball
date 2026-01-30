@@ -1,0 +1,28 @@
+services:
+  # Next.js + Socket.io server
+  - type: web
+    name: nba-wheel-app
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NBA_SERVICE_URL
+        sync: false
+      - key: PORT
+        value: 10000
+    healthCheckPath: /
+    
+  # Python FastAPI NBA data service
+  - type: web
+    name: nba-wheel-api
+    env: python
+    plan: free
+    buildCommand: pip install -r nba-service/requirements.txt
+    startCommand: cd nba-service && uvicorn main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: NEXT_PUBLIC_APP_ORIGIN
+        sync: false
+    healthCheckPath: /health
