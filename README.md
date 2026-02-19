@@ -24,8 +24,8 @@ Two-player online NBA roster draft game: spin a wheel of teams, pick players fro
 ```bash
 cd nba-service
 python3 -m venv .venv
-# Windows (PowerShell):  .\.venv\Scripts\Activate.ps1
-# macOS / Linux:        source .venv/bin/activate
+
+source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
