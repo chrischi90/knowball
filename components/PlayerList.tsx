@@ -138,6 +138,13 @@ export function PlayerList({
       <h3 className="font-semibold text-orange-400 mb-3">
         Pick a player from {teamName}
       </h3>
+      {players.length === 0 && (
+        <div className="mb-4 rounded-lg border border-amber-700/50 bg-amber-900/30 p-3 text-sm text-amber-200">
+          No players were returned for this team right now. This is usually an
+          upstream NBA data fetch issue; try spinning again or retry in a few
+          seconds.
+        </div>
+      )}
       
       {/* Search Input */}
       <div className="relative mb-4">

@@ -78,6 +78,7 @@ def list_team_players(team_id: str):
     """
     try:
         all_players = {}  # player_id -> { id, name, position, ... }
+        season_errors = []
         for season in ROSTER_SEASONS:
             try:
                 roster = CommonTeamRoster(team_id=team_id, season=season)
@@ -101,9 +102,19 @@ def list_team_players(team_id: str):
                             "position": pos[:2] if len(pos) >= 2 else pos,
                             "jersey": str(row.get("NUM", "")),
                         }
-            except Exception:
+            except Exception as season_err:
+                season_errors.append(f"{season}: {season_err}")
                 continue
         players = list(all_players.values())
+        if not players and season_errors:
+            # Avoid silently returning empty lists when upstream calls failed.
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Unable to fetch team roster from NBA stats service. "
+                    f"team_id={team_id}. Errors: {' | '.join(season_errors[:2])}"
+                ),
+            )
         players.sort(key=lambda p: p["name"])
         return {"players": players}
     except Exception as e:

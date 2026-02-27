@@ -47,7 +47,7 @@ export default function LobbyPage() {
   };
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center p-4 bg-slate-900 text-white">
+    <main className="min-h-screen flex flex-col items-center justify-center p-4 bg-black text-white">
       <h1 className="text-3xl font-bold mb-2">NBA Roster Wheel</h1>
       <p className="text-slate-400 mb-8 text-center max-w-sm">
         Two players. Spin the wheel. Draft your roster. Simulate and win.
