@@ -48,8 +48,8 @@ export default function LobbyPage() {
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-4 bg-black text-white">
-      <h1 className="text-3xl font-bold mb-2">NBA Roster Wheel</h1>
-      <p className="text-slate-400 mb-8 text-center max-w-sm">
+      <h1 className="font-funnel-display text-6xl font-bold mb-2">Knowball</h1>
+      <p className="text-zinc-400 mb-8 text-center max-w-sm">
         Two players. Spin the wheel. Draft your roster. Simulate and win.
       </p>
 
@@ -58,13 +58,13 @@ export default function LobbyPage() {
           type="button"
           onClick={handleCreate}
           disabled={creating}
-          className="w-full py-4 px-6 rounded-xl bg-orange-600 hover:bg-orange-500 disabled:opacity-50 font-semibold text-lg transition"
+          className="w-full py-3.5 px-6 rounded-lg bg-orange-600 hover:bg-orange-500 disabled:opacity-50 font-semibold text-lg transition"
         >
-          {creating ? "Creating…" : "Create Game!!!"}
+          {creating ? "Creating…" : "Create Game"}
         </button>
 
         <div className="relative">
-          <span className="block text-center text-slate-500 text-sm">or</span>
+          <span className="block text-center text-zinc-500 text-sm">or</span>
         </div>
 
         <form onSubmit={handleJoin} className="space-y-3">
@@ -74,12 +74,12 @@ export default function LobbyPage() {
             onChange={(e) => setGameCode(e.target.value.toUpperCase())}
             placeholder="Game code"
             maxLength={8}
-            className="w-full py-3 px-4 rounded-xl bg-slate-800 border border-slate-600 text-center text-lg tracking-widest placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            className="w-full py-2.5 px-4 rounded-lg bg-zinc-900 border border-zinc-700 text-center text-lg tracking-widest placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
           <button
             type="submit"
             disabled={joining}
-            className="w-full py-4 px-6 rounded-xl bg-slate-700 hover:bg-slate-600 disabled:opacity-50 font-semibold transition"
+            className="w-full py-3.5 px-6 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 font-semibold transition"
           >
             {joining ? "Joining…" : "Join Game"}
           </button>

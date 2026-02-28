@@ -27,6 +27,7 @@ function createGame() {
   const state = {
     gameId,
     phase: "lobby",
+    gameMode: "all_time",
     player1: null,
     player2: null,
     currentTurn: 1,
@@ -54,6 +55,14 @@ function joinGame(gameId, socketId, playerNumber) {
     if (game.player2) return null;
     game.player2 = { socketId };
   }
+  return game;
+}
+
+function setGameMode(gameId, gameMode) {
+  const game = games.get(gameId);
+  if (!game || game.phase !== "lobby") return null;
+  if (gameMode !== "all_time" && gameMode !== "active_only") return null;
+  game.gameMode = gameMode;
   return game;
 }
 
@@ -109,10 +118,11 @@ function setSimulationResult(gameId, result) {
 function rematchGame(gameId) {
   const game = games.get(gameId);
   if (!game || !game.player1 || !game.player2) return null;
-  // Reset game state but keep players
+  // Reset game state but keep players (keep gameMode)
   game.phase = "lobby";
   game.currentTurn = 1;
   game.wheelTeamId = null;
+  game.gameMode = game.gameMode || "all_time";
   game.wheelTeamName = null;
   game.rosters = { 1: createEmptyRosterJS(), 2: createEmptyRosterJS() };
   game.takenPlayerIds = [];
@@ -124,6 +134,7 @@ module.exports = {
   createGame,
   getGame,
   joinGame,
+  setGameMode,
   startDraft,
   spinWheel,
   pickPlayer,

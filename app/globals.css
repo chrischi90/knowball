@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Funnel+Display:wght@700&family=Funnel+Sans:wght@300;400;500;600;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -8,8 +10,13 @@
 }
 
 body {
+  font-family: "Funnel Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--foreground);
   background: var(--background);
+}
+
+.font-funnel-display {
+  font-family: "Funnel Display", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 /* Touch-friendly tap targets */

@@ -115,7 +115,7 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, onSpin }: WheelP
 
   if (teams.length === 0) {
     return (
-      <div className="rounded-xl bg-slate-800 p-6 text-center text-slate-400">
+      <div className="rounded-lg bg-zinc-900 p-6 text-center text-zinc-400">
         Loading teams…
       </div>
     );
@@ -127,8 +127,8 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, onSpin }: WheelP
   const labelRadius = radius * 0.65; // Slightly smaller to avoid center button
 
   return (
-    <div className="rounded-xl bg-slate-800 p-4">
-      <p className="text-center text-slate-400 text-sm mb-4">
+    <div className="rounded-lg bg-zinc-900 p-4">
+      <p className="text-center text-zinc-400 text-sm mb-4">
         {isMyTurn && !spinning
           ? "Your turn — spin the wheel!"
           : spinning

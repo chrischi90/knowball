@@ -19,8 +19,8 @@ function RosterCard({
   isYou: boolean;
 }) {
   return (
-    <div className={`rounded-xl p-4 ${isYou ? "bg-slate-700 ring-2 ring-orange-500" : "bg-slate-800"}`}>
-      <h3 className="font-semibold text-slate-300 mb-2 flex items-center gap-2">
+    <div className={`rounded-lg p-4 ${isYou ? "bg-zinc-800 ring-2 ring-orange-500" : "bg-zinc-900"}`}>
+      <h3 className="font-funnel-display font-semibold text-zinc-300 mb-2 flex items-center gap-2">
         {label}
         {isYou && (
           <span className="text-xs bg-orange-600 px-2 py-0.5 rounded">You</span>
@@ -29,7 +29,7 @@ function RosterCard({
       <ul className="space-y-1 text-sm">
         {POSITIONS.map((pos) => (
           <li key={pos} className="flex justify-between gap-2">
-            <span className="text-slate-500 w-8">{pos}</span>
+            <span className="text-zinc-500 w-8">{pos}</span>
             <span className="text-white truncate">
               {roster[pos].playerName || "—"}
             </span>

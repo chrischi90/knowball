@@ -13,9 +13,14 @@ export async function fetchTeams(): Promise<{ teams: NBATeam[] }> {
 }
 
 export async function fetchTeamPlayers(
-  teamId: string
+  teamId: string,
+  options?: { activeOnly?: boolean }
 ): Promise<{ players: NBAPlayer[] }> {
-  const res = await fetch(`${NBA_SERVICE_URL}/teams/${teamId}/players`);
+  const params = new URLSearchParams();
+  if (options?.activeOnly) params.set("active_only", "true");
+  const qs = params.toString();
+  const url = `${NBA_SERVICE_URL}/teams/${teamId}/players${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error("Failed to fetch team players");
   return res.json();
 }

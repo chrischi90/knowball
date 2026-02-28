@@ -7,6 +7,8 @@ export type Position = (typeof POSITIONS)[number];
 
 export type GamePhase = "lobby" | "drafting" | "simulation" | "completed";
 
+export type GameMode = "all_time" | "active_only";
+
 export type RosterSlot = {
   position: Position;
   playerId: string | null;
@@ -28,6 +30,7 @@ export function createEmptyRoster(): Roster {
 export type GameState = {
   gameId: string;
   phase: GamePhase;
+  gameMode: GameMode;
   player1: { socketId: string; name?: string } | null;
   player2: { socketId: string; name?: string } | null;
   currentTurn: 1 | 2; // 1 or 2

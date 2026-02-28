@@ -71,15 +71,18 @@ def list_teams():
 
 
 @app.get("/teams/{team_id}/players")
-def list_team_players(team_id: str):
+def list_team_players(team_id: str, active_only: bool = False):
     """
-    List players who have played for this team (current + recent seasons).
-    Returns active and recently active/retired players. Deduplicated by player_id.
+    List players who have played for this team.
+    - active_only=False (default): current + recent seasons (all-time, includes retired).
+    - active_only=True: current season only (active players).
+    Deduplicated by player_id.
     """
     try:
+        seasons = ["2024-25"] if active_only else ROSTER_SEASONS
         all_players = {}  # player_id -> { id, name, position, ... }
         season_errors = []
-        for season in ROSTER_SEASONS:
+        for season in seasons:
             try:
                 roster = CommonTeamRoster(team_id=team_id, season=season)
                 df = roster.get_data_frames()[0]

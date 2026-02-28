@@ -2,6 +2,7 @@ const {
   createGame,
   getGame,
   joinGame,
+  setGameMode,
   startDraft,
   spinWheel,
   pickPlayer,
@@ -79,6 +80,28 @@ function registerSocketHandlers(io) {
         if (typeof callback === "function")
           callback({ error: e.message || "Failed to join" });
       }
+    });
+
+    socket.on("set_game_mode", ({ gameId, gameMode }, callback) => {
+      const game = getGame(gameId);
+      if (!game || game.phase !== "lobby") {
+        if (typeof callback === "function")
+          callback({ error: "Game not in lobby" });
+        return;
+      }
+      if (getPlayerNumber(game, socket.id) !== 1) {
+        if (typeof callback === "function")
+          callback({ error: "Only player 1 can set game mode" });
+        return;
+      }
+      const updated = setGameMode(gameId, gameMode);
+      if (!updated) {
+        if (typeof callback === "function")
+          callback({ error: "Could not set game mode" });
+        return;
+      }
+      if (typeof callback === "function") callback({ game: updated });
+      broadcastGameState(io, gameId, updated);
     });
 
     socket.on("start_draft", (callback) => {
