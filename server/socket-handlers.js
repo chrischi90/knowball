@@ -3,6 +3,7 @@ const {
   getGame,
   joinGame,
   setGameMode,
+  setFirstDrafter,
   startDraft,
   spinWheel,
   pickPlayer,
@@ -15,6 +16,12 @@ function getPlayerNumber(game, socketId) {
   if (game.player1?.socketId === socketId) return 1;
   if (game.player2?.socketId === socketId) return 2;
   return null;
+}
+
+// Prefer socket.data.playerNumber (set on join) over socket ID lookup.
+// This survives socket ID mismatches (reconnects, same-browser testing, etc.)
+function getPlayerNum(socket, game) {
+  return socket.data.playerNumber ?? getPlayerNumber(game, socket.id);
 }
 
 function broadcastGameState(io, gameId, game) {
@@ -33,6 +40,8 @@ function registerSocketHandlers(io) {
         const game = createGame();
         socket.join(game.gameId);
         const updated = joinGame(game.gameId, socket.id, 1);
+        socket.data.playerNumber = 1;
+        socket.data.gameId = game.gameId;
         if (typeof callback === "function")
           callback({ gameId: game.gameId, game: updated || game });
         broadcastGameState(io, game.gameId, updated || game);
@@ -73,6 +82,8 @@ function registerSocketHandlers(io) {
           return;
         }
         socket.join(gameId);
+        socket.data.playerNumber = playerNumber;
+        socket.data.gameId = gameId;
         if (typeof callback === "function")
           callback({ game, playerNumber });
         broadcastGameState(io, gameId, updated);
@@ -89,7 +100,7 @@ function registerSocketHandlers(io) {
           callback({ error: "Game not in lobby" });
         return;
       }
-      if (getPlayerNumber(game, socket.id) !== 1) {
+      if (getPlayerNum(socket, game) !== 1) {
         if (typeof callback === "function")
           callback({ error: "Only player 1 can set game mode" });
         return;
@@ -98,6 +109,28 @@ function registerSocketHandlers(io) {
       if (!updated) {
         if (typeof callback === "function")
           callback({ error: "Could not set game mode" });
+        return;
+      }
+      if (typeof callback === "function") callback({ game: updated });
+      broadcastGameState(io, gameId, updated);
+    });
+
+    socket.on("set_first_drafter", ({ gameId, playerNumber }, callback) => {
+      const game = getGame(gameId);
+      if (!game || game.phase !== "lobby") {
+        if (typeof callback === "function")
+          callback({ error: "Game not in lobby" });
+        return;
+      }
+      if (getPlayerNum(socket, game) !== 1) {
+        if (typeof callback === "function")
+          callback({ error: "Only player 1 can set draft order" });
+        return;
+      }
+      const updated = setFirstDrafter(gameId, playerNumber);
+      if (!updated) {
+        if (typeof callback === "function")
+          callback({ error: "Could not set draft order" });
         return;
       }
       if (typeof callback === "function") callback({ game: updated });
@@ -113,7 +146,7 @@ function registerSocketHandlers(io) {
         return;
       }
       const game = getGame(gameId);
-      if (!game || getPlayerNumber(game, socket.id) !== 1) {
+      if (!game || getPlayerNum(socket, game) !== 1) {
         if (typeof callback === "function")
           callback({ error: "Only player 1 can start" });
         return;
@@ -137,7 +170,7 @@ function registerSocketHandlers(io) {
         return;
       }
       const game = getGame(gameId);
-      const pn = getPlayerNumber(game, socket.id);
+      const pn = getPlayerNum(socket, game);
       if (!game || game.phase !== "drafting" || game.currentTurn !== pn) {
         if (typeof callback === "function")
           callback({ error: "Not your turn or invalid phase" });
@@ -190,7 +223,7 @@ function registerSocketHandlers(io) {
           return;
         }
         const game = getGame(gameId);
-        const pn = getPlayerNumber(game, socket.id);
+        const pn = getPlayerNum(socket, game);
         if (!game || game.phase !== "drafting" || game.currentTurn !== pn) {
           if (typeof callback === "function")
             callback({ error: "Not your turn" });

@@ -28,6 +28,7 @@ function createGame() {
     gameId,
     phase: "lobby",
     gameMode: "all_time",
+    firstDrafter: 1,
     player1: null,
     player2: null,
     currentTurn: 1,
@@ -66,12 +67,20 @@ function setGameMode(gameId, gameMode) {
   return game;
 }
 
+function setFirstDrafter(gameId, playerNumber) {
+  const game = games.get(gameId);
+  if (!game || game.phase !== "lobby") return null;
+  if (playerNumber !== 1 && playerNumber !== 2) return null;
+  game.firstDrafter = playerNumber;
+  return game;
+}
+
 function startDraft(gameId) {
   const game = games.get(gameId);
   if (!game || game.phase !== "lobby" || !game.player1 || !game.player2)
     return null;
   game.phase = "drafting";
-  game.currentTurn = 1;
+  game.currentTurn = game.firstDrafter || 1;
   return game;
 }
 
@@ -135,6 +144,7 @@ module.exports = {
   getGame,
   joinGame,
   setGameMode,
+  setFirstDrafter,
   startDraft,
   spinWheel,
   pickPlayer,

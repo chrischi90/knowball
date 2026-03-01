@@ -128,12 +128,12 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, onSpin }: WheelP
 
   return (
     <div className="rounded-lg bg-zinc-900 p-4">
-      <p className="text-center text-zinc-400 text-sm mb-4">
+      <p className={`text-center mb-4 text-xl ${isMyTurn && !spinning ? "text-white font-bold" : "text-zinc-400 font-normal"}`}>
         {isMyTurn && !spinning
-          ? "Your turn — spin the wheel!"
+          ? "Your turn!"
           : spinning
             ? "Spinning…"
-            : "Waiting for your turn"}
+            : "Waiting for your turn..."}
       </p>
       <div className="relative mx-auto w-full max-w-xl aspect-square">
         <div

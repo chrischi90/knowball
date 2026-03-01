@@ -74,8 +74,18 @@ export default function GamePage() {
   }, [gameId]);
 
   const handleSetGameMode = useCallback((gameMode: GameMode) => {
+    setGame((g) => g ? { ...g, gameMode } : null);
     const socket = getSocket();
     socket.emit("set_game_mode", { gameId, gameMode }, (res: { game?: GameState; error?: string }) => {
+      if (res.game) setGame(res.game);
+      if (res.error) setError(res.error);
+    });
+  }, [gameId]);
+
+  const handleSetFirstDrafter = useCallback((playerNumber: 1 | 2) => {
+    setGame((g) => g ? { ...g, firstDrafter: playerNumber } : null);
+    const socket = getSocket();
+    socket.emit("set_first_drafter", { gameId, playerNumber }, (res: { game?: GameState; error?: string }) => {
       if (res.game) setGame(res.game);
       if (res.error) setError(res.error);
     });
@@ -184,9 +194,8 @@ export default function GamePage() {
     );
   }
 
-  const isPlayer1 = game.player1?.socketId === getSocket().id;
-  const isPlayer2 = game.player2?.socketId === getSocket().id;
-  const myNumber = isPlayer1 ? 1 : isPlayer2 ? 2 : null;
+  const isPlayer1 = playerNumber === 1;
+  const myNumber = playerNumber;
   const canStart = game.phase === "lobby" && isPlayer1 && game.player1 && game.player2;
   const isMyTurn = game.phase === "drafting" && myNumber === game.currentTurn && !game.wheelTeamId;
   const showWheel = game.phase === "drafting" && teams.length > 0;
@@ -295,16 +304,22 @@ export default function GamePage() {
                 <p className="text-zinc-400 text-sm mb-4">
                   Choose whether to draft from all players (including retired) or active players only.
                 </p>
-                <div className="flex rounded-lg border border-zinc-700 bg-zinc-800/80 p-1 mb-6">
+                <p className="text-zinc-400 text-sm mb-4 leading-relaxed">
+                  <span className="font-bold">NOTE:</span> In All-Time mode, a player&apos;s stats are based only on their time with the drafted team — not their full career.
+                </p>
+                <div className={`relative flex rounded-lg border border-zinc-700 bg-zinc-800/80 p-1 mb-6${myNumber !== 1 ? " opacity-70" : ""}`}>
+                  <div
+                    className={`pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-md ring-1 ring-orange-500 shadow-[inset_0_0_8px_rgba(249,115,22,0.45)] transition-transform duration-200 ease-in-out${myNumber !== 1 ? " grayscale" : ""}${
+                      (game.gameMode ?? "all_time") === "active_only" ? " translate-x-full" : ""
+                    }`}
+                  />
                   <button
                     type="button"
                     onClick={() => handleSetGameMode("all_time")}
                     disabled={myNumber !== 1}
-                    className={`flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition ${
-                      (game.gameMode ?? "all_time") === "all_time"
-                        ? "bg-orange-600 text-white"
-                        : "text-zinc-300 hover:text-white"
-                    } ${myNumber !== 1 ? "opacity-70 cursor-default" : ""}`}
+                    className={`relative z-10 flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition-colors duration-200 ${
+                      (game.gameMode ?? "all_time") === "all_time" ? "text-white" : "text-zinc-400"
+                    } ${myNumber !== 1 ? "cursor-default" : ""}`}
                   >
                     All-Time
                   </button>
@@ -312,15 +327,51 @@ export default function GamePage() {
                     type="button"
                     onClick={() => handleSetGameMode("active_only")}
                     disabled={myNumber !== 1}
-                    className={`flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition ${
-                      (game.gameMode ?? "all_time") === "active_only"
-                        ? "bg-orange-600 text-white"
-                        : "text-zinc-300 hover:text-white"
-                    } ${myNumber !== 1 ? "opacity-70 cursor-default" : ""}`}
+                    className={`relative z-10 flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition-colors duration-200 ${
+                      (game.gameMode ?? "all_time") === "active_only" ? "text-white" : "text-zinc-400"
+                    } ${myNumber !== 1 ? "cursor-default" : ""}`}
                   >
                     Active Only
                   </button>
                 </div>
+                <h3 className="font-funnel-display text-lg font-semibold text-white mb-3">Draft Order</h3>
+                <p className="text-zinc-400 text-sm mb-4">
+                  Choose which player picks first.
+                </p>
+                <div className={`relative flex rounded-lg border border-zinc-700 bg-zinc-800/80 p-1 mb-6${myNumber !== 1 ? " opacity-70" : ""}`}>
+                  <div
+                    className={`pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-md ring-1 ring-orange-500 shadow-[inset_0_0_8px_rgba(249,115,22,0.45)] transition-transform duration-200 ease-in-out${myNumber !== 1 ? " grayscale" : ""}${
+                      (game.firstDrafter ?? 1) === 2 ? " translate-x-full" : ""
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleSetFirstDrafter(1)}
+                    disabled={myNumber !== 1}
+                    className={`relative z-10 flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition-colors duration-200 ${
+                      (game.firstDrafter ?? 1) === 1 ? "text-white" : "text-zinc-400"
+                    } ${myNumber !== 1 ? "cursor-default" : ""}`}
+                  >
+                    Player 1
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetFirstDrafter(2)}
+                    disabled={myNumber !== 1}
+                    className={`relative z-10 flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition-colors duration-200 ${
+                      (game.firstDrafter ?? 1) === 2 ? "text-white" : "text-zinc-400"
+                    } ${myNumber !== 1 ? "cursor-default" : ""}`}
+                  >
+                    Player 2
+                  </button>
+                </div>
+
+                {myNumber !== 1 && (
+                  <p className="text-center font-funnel-display text-orange-500 text-sm mt-4 mb-2 animate-pulse">
+                    Waiting for Player 1 to start...
+                  </p>
+                )}
+
                 {canStart && (
                   <button
                     type="button"

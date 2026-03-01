@@ -33,6 +33,7 @@ export type GameState = {
   gameMode: GameMode;
   player1: { socketId: string; name?: string } | null;
   player2: { socketId: string; name?: string } | null;
+  firstDrafter: 1 | 2;
   currentTurn: 1 | 2; // 1 or 2
   wheelTeamId: string | null;
   wheelTeamName: string | null;
