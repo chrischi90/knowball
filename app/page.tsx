@@ -60,7 +60,7 @@ export default function LobbyPage() {
           disabled={creating}
           className="w-full py-3.5 px-6 rounded-lg bg-orange-600 hover:bg-orange-500 disabled:opacity-50 font-semibold text-lg transition"
         >
-          {creating ? "Creating…" : "Create Game"}
+          {creating ? "Creating…" : "Create Game"} hello
         </button>
 
         <div className="relative">
