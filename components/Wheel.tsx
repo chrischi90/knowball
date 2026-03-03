@@ -8,6 +8,8 @@ type WheelProps = {
   currentTeamId: string | null;
   isMyTurn: boolean;
   gameId: string;
+  myNumber: 1 | 2 | null;
+  currentTurn: 1 | 2;
   onSpin: (result: { teamIndex: number; teamId: string; teamName: string }) => void;
 };
 
@@ -29,7 +31,7 @@ function getTeamColor(abbreviation: string): string {
   return NBA_TEAM_COLORS[abbreviation] || "#4B5563";
 }
 
-export function Wheel({ teams, currentTeamId, isMyTurn, gameId, onSpin }: WheelProps) {
+export function Wheel({ teams, currentTeamId, isMyTurn, gameId, myNumber, currentTurn, onSpin }: WheelProps) {
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [landedIndex, setLandedIndex] = useState<number | null>(null);
@@ -219,7 +221,7 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, onSpin }: WheelP
       {/* Landed Team Result */}
       {showResult && landedIndex !== null && (
         <p className="text-center mt-6 text-orange-400 font-bold text-lg">
-          🎯 Landed on: {displayTeams[landedIndex]?.full_name}
+          {myNumber === currentTurn ? "You" : `Player ${currentTurn}`} landed on: {displayTeams[landedIndex]?.full_name}
         </p>
       )}
     </div>

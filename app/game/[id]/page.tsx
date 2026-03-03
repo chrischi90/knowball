@@ -393,6 +393,8 @@ export default function GamePage() {
               currentTeamId={game.wheelTeamId}
               isMyTurn={isMyTurn}
               gameId={gameId}
+              myNumber={myNumber}
+              currentTurn={game.currentTurn}
               onSpin={handleSpin}
             />
           </div>
