@@ -71,14 +71,18 @@ def list_teams():
 
 
 @app.get("/teams/{team_id}/players")
-def list_team_players(team_id: str):
+def list_team_players(team_id: str, active_only: bool = False):
     """
-    List players who have played for this team (current + recent seasons).
-    Returns active and recently active/retired players. Deduplicated by player_id.
+    List players who have played for this team.
+    - active_only=False (default): current + recent seasons (all-time, includes retired).
+    - active_only=True: current season only (active players).
+    Deduplicated by player_id.
     """
     try:
+        seasons = ["2024-25"] if active_only else ROSTER_SEASONS
         all_players = {}  # player_id -> { id, name, position, ... }
-        for season in ROSTER_SEASONS:
+        season_errors = []
+        for season in seasons:
             try:
                 roster = CommonTeamRoster(team_id=team_id, season=season)
                 df = roster.get_data_frames()[0]
@@ -101,9 +105,19 @@ def list_team_players(team_id: str):
                             "position": pos[:2] if len(pos) >= 2 else pos,
                             "jersey": str(row.get("NUM", "")),
                         }
-            except Exception:
+            except Exception as season_err:
+                season_errors.append(f"{season}: {season_err}")
                 continue
         players = list(all_players.values())
+        if not players and season_errors:
+            # Avoid silently returning empty lists when upstream calls failed.
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Unable to fetch team roster from NBA stats service. "
+                    f"team_id={team_id}. Errors: {' | '.join(season_errors[:2])}"
+                ),
+            )
         players.sort(key=lambda p: p["name"])
         return {"players": players}
     except Exception as e:
