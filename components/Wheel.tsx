@@ -11,6 +11,7 @@ type WheelProps = {
   myNumber: 1 | 2 | null;
   currentTurn: 1 | 2;
   onSpin: (result: { teamIndex: number; teamId: string; teamName: string }) => void;
+  onSpinStart?: () => void;
 };
 
 const SEGMENT_DEG = 360 / 30;
@@ -31,7 +32,7 @@ function getTeamColor(abbreviation: string): string {
   return NBA_TEAM_COLORS[abbreviation] || "#4B5563";
 }
 
-export function Wheel({ teams, currentTeamId, isMyTurn, gameId, myNumber, currentTurn, onSpin }: WheelProps) {
+export function Wheel({ teams, currentTeamId, isMyTurn, gameId, myNumber, currentTurn, onSpin, onSpinStart }: WheelProps) {
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [landedIndex, setLandedIndex] = useState<number | null>(null);
@@ -62,7 +63,8 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, myNumber, curren
 
   const handleSpin = useCallback(() => {
     if (!isMyTurn || spinning || teams.length === 0) return;
-    
+
+    onSpinStart?.();
     setSpinning(true);
     setLandedIndex(null);
     setShowResult(false);
@@ -200,7 +202,7 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, myNumber, curren
           disabled={!isMyTurn || spinning}
           className="absolute inset-0 flex items-center justify-center z-10"
         >
-          <div className="w-20 h-20 rounded-full bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex items-center justify-center font-semibold text-white text-sm transition touch-manipulation"
+          <div className={`w-20 h-20 rounded-full shadow-lg flex items-center justify-center font-semibold text-white text-sm transition touch-manipulation ${!isMyTurn || spinning ? "bg-zinc-600 opacity-70 cursor-not-allowed" : "bg-orange-600 hover:bg-orange-500"}`}
                style={{ pointerEvents: !isMyTurn || spinning ? "none" : "auto" }}>
             {spinning ? "Spinning…" : "Spin"}
           </div>

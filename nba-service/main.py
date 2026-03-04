@@ -1,14 +1,30 @@
 """
 NBA data service using nba_api. Exposes REST endpoints for teams, team rosters, and player stats.
 """
+import json
 import os
-from functools import lru_cache
+import time
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-# nba_api imports
+# nba_api imports — patch headers before importing endpoints so stats.nba.com
+# doesn't block the requests. NBAStatsHTTP (subclass) owns the actual headers dict.
+import nba_api.stats.library.http as _nba_stats_http
+
+_nba_stats_http.NBAStatsHTTP.headers.update({
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://www.nba.com/",
+    "x-nba-stats-origin": "stats",
+    "x-nba-stats-token": "true",
+})
+
 from nba_api.stats.static import teams as static_teams
 from nba_api.stats.endpoints import CommonTeamRoster, PlayerCareerStats
 
@@ -124,37 +140,76 @@ def list_team_players(team_id: str, active_only: bool = False):
         raise HTTPException(status_code=502, detail=str(e))
 
 
-@lru_cache(maxsize=500)
-def _get_player_career_per_game(player_id: str) -> Optional[dict]:
-    """Fetch career per-game stats for simulation. Cached by player_id."""
+# Persistent disk cache for player stats. Survives service restarts so a successful
+# fetch is never lost. Only successful (non-None) results are stored.
+_STATS_CACHE_FILE = Path(__file__).parent / "stats_cache.json"
+
+def _load_stats_cache() -> dict:
     try:
-        stats = PlayerCareerStats(player_id=player_id, per_mode36="PerGame")
-        dfs = stats.get_data_frames()
-        # CareerTotalsRegularSeason is index 3 per docs
-        for df in dfs:
-            if "PTS" in df.columns and "GP" in df.columns:
-                # Aggregate career: sum totals then divide by total GP for per-game
-                total_gp = df["GP"].sum()
-                if total_gp == 0:
-                    return None
-                return {
-                    "player_id": player_id,
-                    "gp": int(total_gp),
-                    "pts": float((df["PTS"] * df["GP"]).sum() / total_gp),
-                    "reb": float((df["REB"] * df["GP"]).sum() / total_gp),
-                    "ast": float((df["AST"] * df["GP"]).sum() / total_gp),
-                    "stl": float((df["STL"] * df["GP"]).sum() / total_gp),
-                    "blk": float((df["BLK"] * df["GP"]).sum() / total_gp),
-                }
-        return None
+        if _STATS_CACHE_FILE.exists():
+            return json.loads(_STATS_CACHE_FILE.read_text())
     except Exception:
-        return None
+        pass
+    return {}
+
+def _save_stats_cache(cache: dict) -> None:
+    try:
+        _STATS_CACHE_FILE.write_text(json.dumps(cache))
+    except Exception:
+        pass
+
+_stats_cache: dict = _load_stats_cache()
+
+
+def _fetch_player_career_per_game(player_id: str, team_id: Optional[str] = None) -> Optional[dict]:
+    """Internal: fetch per-game stats from nba_api. No caching. Retries up to 3 times."""
+    for attempt in range(3):
+        try:
+            stats = PlayerCareerStats(player_id=player_id, per_mode36="PerGame", timeout=30)
+            dfs = stats.get_data_frames()
+            # SeasonTotalsRegularSeason is index 0; has one row per season-team combo
+            for df in dfs:
+                if "PTS" in df.columns and "GP" in df.columns:
+                    if team_id is not None:
+                        # Filter to only seasons with this team; skip TOT rows (TEAM_ID=0)
+                        df = df[df["TEAM_ID"] == int(team_id)]
+                    # Exclude injury-shortened seasons (< 20 GP) so stats reflect healthy play
+                    df = df[df["GP"] >= 20]
+                    total_gp = df["GP"].sum()
+                    if total_gp == 0:
+                        return None
+                    return {
+                        "player_id": player_id,
+                        "gp": int(total_gp),
+                        "pts": float((df["PTS"] * df["GP"]).sum() / total_gp),
+                        "reb": float((df["REB"] * df["GP"]).sum() / total_gp),
+                        "ast": float((df["AST"] * df["GP"]).sum() / total_gp),
+                        "stl": float((df["STL"] * df["GP"]).sum() / total_gp),
+                        "blk": float((df["BLK"] * df["GP"]).sum() / total_gp),
+                    }
+            return None
+        except Exception:
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+    return None
+
+
+def _get_player_career_per_game(player_id: str, team_id: Optional[str] = None) -> Optional[dict]:
+    """Fetch per-game stats. Uses persistent disk cache; only caches successful results."""
+    key = f"{player_id}:{team_id}"
+    if key in _stats_cache:
+        return _stats_cache[key]
+    result = _fetch_player_career_per_game(player_id, team_id)
+    if result is not None:
+        _stats_cache[key] = result
+        _save_stats_cache(_stats_cache)
+    return result
 
 
 @app.get("/players/{player_id}/stats")
-def get_player_stats(player_id: str):
-    """Get career per-game stats for simulation."""
-    result = _get_player_career_per_game(player_id)
+def get_player_stats(player_id: str, team_id: Optional[str] = None):
+    """Get per-game stats for simulation. Pass team_id to scope stats to that team's tenure."""
+    result = _get_player_career_per_game(player_id, team_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Player stats not found")
     return result

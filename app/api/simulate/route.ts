@@ -5,12 +5,6 @@ import { POSITIONS } from "@/lib/game-types";
 
 type Body = { roster1: Roster; roster2: Roster };
 
-function getPlayerIds(roster: Roster): string[] {
-  return POSITIONS.map((p) => roster[p].playerId).filter(
-    (id): id is string => id != null
-  );
-}
-
 function powerScore(pts: number, reb: number, ast: number, stl: number, blk: number): number {
   return pts + reb * 1.2 + ast * 1.5 + stl * 3 + blk * 3;
 }
@@ -26,25 +20,30 @@ export async function POST(req: Request) {
       );
     }
 
-    const ids1 = getPlayerIds(roster1);
-    const ids2 = getPlayerIds(roster2);
-    if (ids1.length !== 5 || ids2.length !== 5) {
+    const count1 = POSITIONS.filter((p) => roster1[p].playerId).length;
+    const count2 = POSITIONS.filter((p) => roster2[p].playerId).length;
+    if (count1 !== 5 || count2 !== 5) {
       return NextResponse.json(
         { error: "Each roster must have 5 players" },
         { status: 400 }
       );
     }
 
-    const fetchAll = async (ids: string[]) => {
+    const fetchAll = async (roster: Roster) => {
       const results = await Promise.all(
-        ids.map((id) => fetchPlayerStats(id).catch(() => null))
+        POSITIONS.map((p) => {
+          const slot = roster[p];
+          return slot.playerId
+            ? fetchPlayerStats(slot.playerId, slot.teamId).catch(() => null)
+            : Promise.resolve(null);
+        })
       );
       return results;
     };
 
     const [stats1, stats2] = await Promise.all([
-      fetchAll(ids1),
-      fetchAll(ids2),
+      fetchAll(roster1),
+      fetchAll(roster2),
     ]);
 
     let team1Score = 0;
