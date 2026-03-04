@@ -13,17 +13,18 @@ export type RosterSlot = {
   position: Position;
   playerId: string | null;
   playerName: string | null;
+  teamId: string | null;
 };
 
 export type Roster = Record<Position, RosterSlot>;
 
 export function createEmptyRoster(): Roster {
   return {
-    PG: { position: "PG", playerId: null, playerName: null },
-    SG: { position: "SG", playerId: null, playerName: null },
-    SF: { position: "SF", playerId: null, playerName: null },
-    PF: { position: "PF", playerId: null, playerName: null },
-    C: { position: "C", playerId: null, playerName: null },
+    PG: { position: "PG", playerId: null, playerName: null, teamId: null },
+    SG: { position: "SG", playerId: null, playerName: null, teamId: null },
+    SF: { position: "SF", playerId: null, playerName: null, teamId: null },
+    PF: { position: "PF", playerId: null, playerName: null, teamId: null },
+    C: { position: "C", playerId: null, playerName: null, teamId: null },
   };
 }
 

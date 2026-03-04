@@ -107,17 +107,27 @@ export default function GamePage() {
     });
   }, []);
 
-  const handlePick = useCallback((playerId: string, playerName: string, position: string) => {
+  const handleRespin = useCallback(() => {
+    const socket = getSocket();
+    socket.emit("respin", null, (res: { game?: GameState; error?: string }) => {
+      if (res.error) setError(res.error);
+      if (res.game) setGame(res.game);
+    });
+  }, []);
+
+  const handlePick = useCallback((playerId: string, playerName: string, position: string, teamId: string) => {
+    const abbrev = teams.find((t) => t.id === teamId)?.abbreviation;
+    const displayName = abbrev ? `${playerName} (${abbrev})` : playerName;
     const socket = getSocket();
     socket.emit(
       "pick",
-      { playerId, playerName, position },
+      { playerId, playerName: displayName, position, teamId },
       (res: { game?: GameState; error?: string }) => {
         if (res.error) setError(res.error);
         if (res.game) setGame(res.game);
       }
     );
-  }, []);
+  }, [teams]);
 
   const handleRunSimulation = useCallback(async () => {
     if (!game) return;
@@ -393,6 +403,7 @@ export default function GamePage() {
               currentRoster={game.rosters[myNumber!]}
               gameMode={game.gameMode ?? "all_time"}
               onPick={handlePick}
+              onRespin={handleRespin}
             />
           </div>
         )}

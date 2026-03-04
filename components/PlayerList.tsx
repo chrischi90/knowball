@@ -12,7 +12,8 @@ type PlayerListProps = {
   takenPlayerIds: string[];
   currentRoster: Roster;
   gameMode?: GameMode;
-  onPick: (playerId: string, playerName: string, position: string) => void;
+  onPick: (playerId: string, playerName: string, position: string, teamId: string) => void;
+  onRespin?: () => void;
 };
 
 export function PlayerList({
@@ -22,6 +23,7 @@ export function PlayerList({
   currentRoster,
   gameMode = "all_time",
   onPick,
+  onRespin,
 }: PlayerListProps) {
   const [players, setPlayers] = useState<NBAPlayer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,7 +72,7 @@ export function PlayerList({
 
   const handleConfirm = () => {
     if (!selectedPlayer || !selectedPosition) return;
-    onPick(selectedPlayer.id, selectedPlayer.name, selectedPosition);
+    onPick(selectedPlayer.id, selectedPlayer.name, selectedPosition, teamId);
     setSelectedPlayer(null);
     setSelectedPosition(null);
     setSearchQuery("");
@@ -144,9 +146,20 @@ export function PlayerList({
       </h3>
       {players.length === 0 && (
         <div className="mb-4 rounded-md border border-amber-700/50 bg-amber-900/30 p-3 text-sm text-amber-200">
-          No players were returned for this team right now. This is usually an
-          upstream NBA data fetch issue; try spinning again or retry in a few
-          seconds.
+          <p>
+            No players were returned for this team right now. This is usually an
+            upstream NBA data fetch issue; try spinning again or retry in a few
+            seconds.
+          </p>
+          {onRespin && (
+            <button
+              type="button"
+              onClick={onRespin}
+              className="mt-3 w-full py-2.5 rounded-md bg-amber-700 hover:bg-amber-600 text-white font-medium transition"
+            >
+              Spin Again
+            </button>
+          )}
         </div>
       )}
       

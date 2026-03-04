@@ -36,25 +36,37 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "roster required" }, { status: 400 });
     }
 
-    const playerIds = POSITIONS.map((p) => roster[p].playerId).filter(
-      (id): id is string => id != null
-    );
-    if (playerIds.length !== 5) {
+    if (POSITIONS.filter((p) => roster[p].playerId).length !== 5) {
       return NextResponse.json({ error: "Roster must have 5 players" }, { status: 400 });
     }
 
-    // Fetch stats for all 5 players in parallel
+    // Fetch stats for all 5 players in parallel, scoped to their selected team
     const statsResults = await Promise.all(
-      playerIds.map((id) => fetchPlayerStats(id).catch(() => null))
+      POSITIONS.map((p) => {
+        const slot = roster[p];
+        return slot.playerId
+          ? fetchPlayerStats(slot.playerId, slot.teamId).catch(() => null)
+          : Promise.resolve(null);
+      })
     );
 
+    // Compute per-player power scores for MVP and team stats
+    const playerScores = statsResults.map((s, i) => ({
+      playerName: roster[POSITIONS[i]].playerName ?? "",
+      position: POSITIONS[i],
+      pts: s?.pts ?? 0,
+      reb: s?.reb ?? 0,
+      ast: s?.ast ?? 0,
+      stl: s?.stl ?? 0,
+      blk: s?.blk ?? 0,
+      score: s ? powerScore(s.pts, s.reb, s.ast, s.stl, s.blk) : 0,
+    }));
+
     let teamPower = 0;
-    statsResults.forEach((s) => {
-      if (s) teamPower += powerScore(s.pts, s.reb, s.ast, s.stl, s.blk);
-    });
+    playerScores.forEach((p) => { teamPower += p.score; });
 
     // Win probability per game, clamped to [0.05, 0.98]
-    const pWin = Math.min(0.98, Math.max(0.05, 0.5 + (teamPower - BASELINE_POWER) / 380));
+    const pWin = Math.min(0.98, Math.max(0.05, 0.5 + (teamPower - BASELINE_POWER) / 300));
 
     // Simulate 82-game regular season
     let wins = 0;
@@ -102,14 +114,51 @@ export async function POST(req: Request) {
     else if (playoffResult === "NBA Finals") milestones.push("Made the Finals");
     else if (!madePlayoffs) milestones.push("Missed the Playoffs");
 
+    // MVP — player with highest individual power score
+    const mvp = playerScores.reduce((best, p) => (p.score > best.score ? p : best), playerScores[0]);
+
+    // Team-level badges based on average stats across all 5 players
+    const avgPts = playerScores.reduce((sum, p) => sum + p.pts, 0) / 5;
+    const avgReb = playerScores.reduce((sum, p) => sum + p.reb, 0) / 5;
+    const avgAst = playerScores.reduce((sum, p) => sum + p.ast, 0) / 5;
+    const avgDef = playerScores.reduce((sum, p) => sum + p.stl + p.blk, 0) / 5;
+
+    const allBadgeCandidates: { badge: string; priority: number }[] = [];
+    if (teamPower >= 180) allBadgeCandidates.push({ badge: "Superteam Alert", priority: 10 });
+    if (avgPts >= 22) allBadgeCandidates.push({ badge: "High-Powered Offense", priority: 8 });
+    else if (avgPts >= 18) allBadgeCandidates.push({ badge: "Reliable Scoring", priority: 4 });
+    else allBadgeCandidates.push({ badge: "Developing Offense", priority: 2 });
+    if (avgReb >= 8) allBadgeCandidates.push({ badge: "Glass Eaters", priority: 7 });
+    else allBadgeCandidates.push({ badge: "On the Glass", priority: 1 });
+    if (avgAst >= 6) allBadgeCandidates.push({ badge: "Playmaking Factory", priority: 6 });
+    if (avgDef >= 3) allBadgeCandidates.push({ badge: "Lockdown Defense", priority: 9 });
+    else if (avgDef >= 1.8) allBadgeCandidates.push({ badge: "Defensive Presence", priority: 3 });
+    else allBadgeCandidates.push({ badge: "Defensive Effort", priority: 0 });
+    if (avgPts >= 15 && avgReb >= 5 && avgAst >= 4) allBadgeCandidates.push({ badge: "Complete Package", priority: 5 });
+
+    const badges = allBadgeCandidates
+      .sort((a, b) => b.priority - a.priority)
+      .slice(0, 3)
+      .map((b) => b.badge);
+
     return NextResponse.json({
       wins,
       losses,
       teamPower: Math.round(teamPower * 10) / 10,
+      playerScores: playerScores.map((p) => ({
+        playerName: p.playerName,
+        position: p.position,
+        pts: Math.round(p.pts * 10) / 10,
+        reb: Math.round(p.reb * 10) / 10,
+        ast: Math.round(p.ast * 10) / 10,
+        score: Math.round(p.score * 10) / 10,
+      })),
       madePlayoffs,
       playoffResult,
       rounds,
       milestones,
+      mvp: { playerName: mvp.playerName, position: mvp.position, pts: mvp.pts, reb: mvp.reb, ast: mvp.ast, stl: mvp.stl, blk: mvp.blk },
+      badges,
     });
   } catch (e) {
     return NextResponse.json(

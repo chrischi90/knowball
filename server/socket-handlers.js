@@ -6,6 +6,7 @@ const {
   setFirstDrafter,
   startDraft,
   spinWheel,
+  clearWheelTeam,
   pickPlayer,
   setSimulationResult,
   rematchGame,
@@ -206,6 +207,30 @@ function registerSocketHandlers(io) {
       broadcastGameState(io, gameId, updated);
     });
 
+    socket.on("respin", (_, callback) => {
+      const gameId = Array.from(socket.rooms).find(
+        (r) => r !== socket.id && r.length === 8
+      );
+      if (!gameId) {
+        if (typeof callback === "function") callback({ error: "Not in a game" });
+        return;
+      }
+      const game = getGame(gameId);
+      const pn = getPlayerNum(socket, game);
+      if (!game || game.phase !== "drafting" || game.currentTurn !== pn) {
+        if (typeof callback === "function")
+          callback({ error: "Not your turn or invalid phase" });
+        return;
+      }
+      const updated = clearWheelTeam(gameId);
+      if (!updated) {
+        if (typeof callback === "function") callback({ error: "Could not respin" });
+        return;
+      }
+      if (typeof callback === "function") callback({ game: updated });
+      broadcastGameState(io, gameId, updated);
+    });
+
     socket.on("cache_teams", ({ gameId, teams }) => {
       const game = getGame(gameId);
       if (game) game._teamsCache = teams;
@@ -213,7 +238,7 @@ function registerSocketHandlers(io) {
 
     socket.on(
       "pick",
-      ({ playerId, playerName, position }, callback) => {
+      ({ playerId, playerName, position, teamId }, callback) => {
         const gameId = Array.from(socket.rooms).find(
           (r) => r !== socket.id && r.length === 8
         );
@@ -239,7 +264,8 @@ function registerSocketHandlers(io) {
           pn,
           playerId,
           playerName,
-          position
+          position,
+          teamId
         );
         if (!updated) {
           if (typeof callback === "function")

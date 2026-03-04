@@ -7,7 +7,7 @@ const POSITIONS = ["PG", "SG", "SF", "PF", "C"];
 function createEmptyRosterJS() {
   const roster = {};
   POSITIONS.forEach((p) => {
-    roster[p] = { position: p, playerId: null, playerName: null };
+    roster[p] = { position: p, playerId: null, playerName: null, teamId: null };
   });
   return roster;
 }
@@ -92,7 +92,7 @@ function spinWheel(gameId, teamId, teamName) {
   return game;
 }
 
-function pickPlayer(gameId, playerNumber, playerId, playerName, position) {
+function pickPlayer(gameId, playerNumber, playerId, playerName, position, teamId) {
   const game = games.get(gameId);
   if (!game || game.phase !== "drafting") return null;
   if (game.currentTurn !== playerNumber) return null;
@@ -100,7 +100,7 @@ function pickPlayer(gameId, playerNumber, playerId, playerName, position) {
   const roster = game.rosters[playerNumber];
   if (!roster[position] || roster[position].playerId) return null;
 
-  roster[position] = { position, playerId, playerName };
+  roster[position] = { position, playerId, playerName, teamId: teamId ?? null };
   game.takenPlayerIds.push(playerId);
   game.wheelTeamId = null;
   game.wheelTeamName = null;
@@ -121,6 +121,14 @@ function setSimulationResult(gameId, result) {
   if (!game) return null;
   game.simulationResult = result;
   game.phase = "completed";
+  return game;
+}
+
+function clearWheelTeam(gameId) {
+  const game = games.get(gameId);
+  if (!game || game.phase !== "drafting") return null;
+  game.wheelTeamId = null;
+  game.wheelTeamName = null;
   return game;
 }
 
@@ -147,6 +155,7 @@ module.exports = {
   setFirstDrafter,
   startDraft,
   spinWheel,
+  clearWheelTeam,
   pickPlayer,
   setSimulationResult,
   rematchGame,

@@ -26,9 +26,13 @@ export async function fetchTeamPlayers(
 }
 
 export async function fetchPlayerStats(
-  playerId: string
+  playerId: string,
+  teamId?: string | null
 ): Promise<PlayerStats | null> {
-  const res = await fetch(`${NBA_SERVICE_URL}/players/${playerId}/stats`);
+  const url = teamId
+    ? `${NBA_SERVICE_URL}/players/${playerId}/stats?team_id=${teamId}`
+    : `${NBA_SERVICE_URL}/players/${playerId}/stats`;
+  const res = await fetch(url);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error("Failed to fetch player stats");
   return res.json();
