@@ -307,19 +307,13 @@ export default function GamePage() {
                 <p className="text-zinc-400 text-sm mb-4 leading-relaxed">
                   <span className="font-bold">NOTE:</span> In All-Time mode, a player&apos;s stats are based only on their time with the drafted team — not their full career.
                 </p>
-                <div className={`relative flex rounded-lg border border-zinc-700 bg-zinc-800/80 p-1 mb-6${myNumber !== 1 ? " opacity-70" : ""}`}>
-                  <div
-                    className={`pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-md ring-1 ring-orange-500 shadow-[inset_0_0_8px_rgba(249,115,22,0.45)] transition-transform duration-200 ease-in-out${myNumber !== 1 ? " grayscale" : ""}${
-                      (game.gameMode ?? "all_time") === "active_only" ? " translate-x-full" : ""
-                    }`}
-                  />
+                <div className={`relative flex rounded-full border border-zinc-700 p-1 mb-6${myNumber !== 1 ? " opacity-70" : ""}`}>
+                  <div className={`pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-orange-600 transition-transform duration-200 ease-in-out${(game.gameMode ?? "all_time") === "active_only" ? " translate-x-full" : ""}`} />
                   <button
                     type="button"
                     onClick={() => handleSetGameMode("all_time")}
                     disabled={myNumber !== 1}
-                    className={`relative z-10 flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition-colors duration-200 ${
-                      (game.gameMode ?? "all_time") === "all_time" ? "text-white" : "text-zinc-400"
-                    } ${myNumber !== 1 ? "cursor-default" : ""}`}
+                    className={`relative z-10 flex-1 py-1.5 px-4 text-sm font-medium transition-colors duration-200 ${(game.gameMode ?? "all_time") === "all_time" ? "text-white" : "text-zinc-400"} ${myNumber !== 1 ? "cursor-default" : ""}`}
                   >
                     All-Time
                   </button>
@@ -327,9 +321,7 @@ export default function GamePage() {
                     type="button"
                     onClick={() => handleSetGameMode("active_only")}
                     disabled={myNumber !== 1}
-                    className={`relative z-10 flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition-colors duration-200 ${
-                      (game.gameMode ?? "all_time") === "active_only" ? "text-white" : "text-zinc-400"
-                    } ${myNumber !== 1 ? "cursor-default" : ""}`}
+                    className={`relative z-10 flex-1 py-1.5 px-4 text-sm font-medium transition-colors duration-200 ${(game.gameMode ?? "all_time") === "active_only" ? "text-white" : "text-zinc-400"} ${myNumber !== 1 ? "cursor-default" : ""}`}
                   >
                     Active Only
                   </button>
@@ -338,19 +330,13 @@ export default function GamePage() {
                 <p className="text-zinc-400 text-sm mb-4">
                   Choose which player picks first.
                 </p>
-                <div className={`relative flex rounded-lg border border-zinc-700 bg-zinc-800/80 p-1 mb-6${myNumber !== 1 ? " opacity-70" : ""}`}>
-                  <div
-                    className={`pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-md ring-1 ring-orange-500 shadow-[inset_0_0_8px_rgba(249,115,22,0.45)] transition-transform duration-200 ease-in-out${myNumber !== 1 ? " grayscale" : ""}${
-                      (game.firstDrafter ?? 1) === 2 ? " translate-x-full" : ""
-                    }`}
-                  />
+                <div className={`relative flex rounded-full border border-zinc-700 p-1 mb-6${myNumber !== 1 ? " opacity-70" : ""}`}>
+                  <div className={`pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-orange-600 transition-transform duration-200 ease-in-out${(game.firstDrafter ?? 1) === 2 ? " translate-x-full" : ""}`} />
                   <button
                     type="button"
                     onClick={() => handleSetFirstDrafter(1)}
                     disabled={myNumber !== 1}
-                    className={`relative z-10 flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition-colors duration-200 ${
-                      (game.firstDrafter ?? 1) === 1 ? "text-white" : "text-zinc-400"
-                    } ${myNumber !== 1 ? "cursor-default" : ""}`}
+                    className={`relative z-10 flex-1 py-1.5 px-4 text-sm font-medium transition-colors duration-200 ${(game.firstDrafter ?? 1) === 1 ? "text-white" : "text-zinc-400"} ${myNumber !== 1 ? "cursor-default" : ""}`}
                   >
                     Player 1
                   </button>
@@ -358,9 +344,7 @@ export default function GamePage() {
                     type="button"
                     onClick={() => handleSetFirstDrafter(2)}
                     disabled={myNumber !== 1}
-                    className={`relative z-10 flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition-colors duration-200 ${
-                      (game.firstDrafter ?? 1) === 2 ? "text-white" : "text-zinc-400"
-                    } ${myNumber !== 1 ? "cursor-default" : ""}`}
+                    className={`relative z-10 flex-1 py-1.5 px-4 text-sm font-medium transition-colors duration-200 ${(game.firstDrafter ?? 1) === 2 ? "text-white" : "text-zinc-400"} ${myNumber !== 1 ? "cursor-default" : ""}`}
                   >
                     Player 2
                   </button>
