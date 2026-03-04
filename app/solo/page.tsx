@@ -9,8 +9,7 @@ import type { NBATeam } from "@/lib/nba-api";
 import { createEmptyRoster, POSITIONS } from "@/lib/game-types";
 import type { Roster, GameMode } from "@/lib/game-types";
 
-// DEV: Set to true to skip drafting and jump straight to the simulate button
-const DEV_PREFILL = true;
+const DEV_PREFILL = false;
 const DEV_ROSTER: Roster = {
   PG: { position: "PG", playerId: "201939",  playerName: "Steph Curry (GS)",      teamId: "1610612744" }, // Golden State Warriors
   SG: { position: "SG", playerId: "1630162", playerName: "Anthony Edwards (MIN)",  teamId: "1610612750" }, // Minnesota Timberwolves
