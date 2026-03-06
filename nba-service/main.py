@@ -1,5 +1,6 @@
 """
-NBA data service using nba_api. Exposes REST endpoints for teams, team rosters, and player stats.
+NBA data service. Teams and rosters served from Neon Postgres DB.
+Player stats still fetched from nba_api (one-time at simulation, with disk cache).
 """
 import json
 import os
@@ -7,11 +8,11 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import psycopg2
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-# nba_api imports — patch headers before importing endpoints so stats.nba.com
-# doesn't block the requests. NBAStatsHTTP (subclass) owns the actual headers dict.
+# nba_api — only needed for the /players/{id}/stats endpoint
 import nba_api.stats.library.http as _nba_stats_http
 
 _nba_stats_http.NBAStatsHTTP.headers.update({
@@ -25,8 +26,7 @@ _nba_stats_http.NBAStatsHTTP.headers.update({
     "x-nba-stats-token": "true",
 })
 
-from nba_api.stats.static import teams as static_teams
-from nba_api.stats.endpoints import CommonTeamRoster, PlayerCareerStats
+from nba_api.stats.endpoints import PlayerCareerStats
 
 app = FastAPI(title="NBA Roster Wheel - Data Service")
 
@@ -44,37 +44,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory cache for teams (static data)
-_teams_cache: Optional[list] = None
+# DB connection — reconnects automatically on idle timeout (Neon free tier: 5 min)
+_conn = None
 
-# Seasons to aggregate for "team players" (current + recent past for more players including retired)
-ROSTER_SEASONS = ["2024-25", "2023-24", "2022-23", "2021-22", "2020-21"]
+
+def get_db():
+    global _conn
+    try:
+        if _conn is None or _conn.closed:
+            raise Exception("no connection")
+        with _conn.cursor() as cur:
+            cur.execute("SELECT 1")
+    except Exception:
+        _conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    return _conn
+
+
+# In-memory cache for teams (populated from DB on first request)
+_teams_cache: Optional[list] = None
 
 
 def get_teams_list() -> list[dict]:
-    """Get all NBA teams. Cached."""
+    """Get all NBA teams from DB. Cached in memory."""
     global _teams_cache
     if _teams_cache is not None:
         return _teams_cache
-    raw = static_teams.get_teams()
-    # Filter to current NBA teams only (id is numeric string, 30 teams)
-    result = []
-    seen_ids = set()
-    for t in raw:
-        tid = str(t.get("id", ""))
-        if tid and tid not in seen_ids:
-            seen_ids.add(tid)
-            result.append({
-                "id": tid,
-                "full_name": t.get("full_name", ""),
-                "abbreviation": t.get("abbreviation", ""),
-                "nickname": t.get("nickname", ""),
-                "city": t.get("city", ""),
-            })
-    # Sort by full_name for consistent wheel order
-    result.sort(key=lambda x: x["full_name"])
-    _teams_cache = result
-    return result
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, full_name, abbreviation, nickname, city FROM teams ORDER BY full_name")
+        rows = cur.fetchall()
+    _teams_cache = [
+        {"id": r[0], "full_name": r[1], "abbreviation": r[2], "nickname": r[3], "city": r[4]}
+        for r in rows
+    ]
+    return _teams_cache
 
 
 @app.get("/teams")
@@ -89,53 +92,47 @@ def list_teams():
 @app.get("/teams/{team_id}/players")
 def list_team_players(team_id: str, active_only: bool = False):
     """
-    List players who have played for this team.
-    - active_only=False (default): current + recent seasons (all-time, includes retired).
-    - active_only=True: current season only (active players).
-    Deduplicated by player_id.
+    List players for this team from DB.
+    - active_only=True: current season (2025-26) only.
+    - active_only=False: all seeded seasons, deduplicated (most recent position wins).
     """
     try:
-        seasons = ["2024-25"] if active_only else ROSTER_SEASONS
-        all_players = {}  # player_id -> { id, name, position, ... }
-        season_errors = []
-        for season in seasons:
-            try:
-                roster = CommonTeamRoster(team_id=team_id, season=season)
-                df = roster.get_data_frames()[0]
-                for _, row in df.iterrows():
-                    pid = str(row["PLAYER_ID"])
-                    if pid not in all_players:
-                        pos = str(row.get("POSITION", "")).strip() or "F"
-                        # Normalize position to PG/SG/SF/PF/C for game
-                        if pos.upper() in ("G", "G-F"):
-                            pos = "SG"
-                        elif pos.upper() in ("F", "F-G"):
-                            pos = "SF"
-                        elif pos.upper() in ("F-C", "C-F"):
-                            pos = "PF"
-                        elif pos.upper() not in ("PG", "SG", "SF", "PF", "C"):
-                            pos = "F"
-                        all_players[pid] = {
-                            "id": pid,
-                            "name": str(row.get("PLAYER", "")),
-                            "position": pos[:2] if len(pos) >= 2 else pos,
-                            "jersey": str(row.get("NUM", "")),
-                        }
-            except Exception as season_err:
-                season_errors.append(f"{season}: {season_err}")
-                continue
-        players = list(all_players.values())
-        if not players and season_errors:
-            # Avoid silently returning empty lists when upstream calls failed.
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    "Unable to fetch team roster from NBA stats service. "
-                    f"team_id={team_id}. Errors: {' | '.join(season_errors[:2])}"
-                ),
-            )
+        conn = get_db()
+        with conn.cursor() as cur:
+            if active_only:
+                cur.execute(
+                    """
+                    SELECT player_id, player_name, position, jersey
+                    FROM roster_players
+                    WHERE team_id = %s AND season = '2025-26'
+                    ORDER BY player_name
+                    """,
+                    (team_id,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT DISTINCT ON (player_id) player_id, player_name, position, jersey
+                    FROM roster_players
+                    WHERE team_id = %s
+                    ORDER BY player_id, season DESC
+                    """,
+                    (team_id,),
+                )
+            rows = cur.fetchall()
+
+        players = [
+            {"id": r[0], "name": r[1], "position": r[2], "jersey": r[3] or ""}
+            for r in rows
+        ]
         players.sort(key=lambda p: p["name"])
+
+        if not players:
+            raise HTTPException(status_code=404, detail=f"No roster data found for team_id={team_id}")
+
         return {"players": players}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
