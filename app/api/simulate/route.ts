@@ -1,12 +1,22 @@
 import { NextResponse } from "next/server";
 import { fetchPlayerStats } from "@/lib/nba-api";
 import type { Roster } from "@/lib/game-types";
+import type { PlayerStats } from "@/lib/nba-api";
 import { POSITIONS } from "@/lib/game-types";
 
 type Body = { roster1: Roster; roster2: Roster; gameMode?: string };
 
 function powerScore(pts: number, reb: number, ast: number, stl: number, blk: number): number {
   return pts + reb * 1.2 + ast * 1.5 + stl * 3 + blk * 3;
+}
+
+function buildStatsMap(roster: Roster, stats: (PlayerStats | null)[]): Record<string, PlayerStats | null> {
+  const map: Record<string, PlayerStats | null> = {};
+  POSITIONS.forEach((p, i) => {
+    const playerId = roster[p].playerId;
+    if (playerId) map[playerId] = stats[i];
+  });
+  return map;
 }
 
 export async function POST(req: Request) {
@@ -29,8 +39,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const fetchAll = async (roster: Roster) => {
-      const results = await Promise.all(
+    const fetchAll = async (roster: Roster) =>
+      Promise.all(
         POSITIONS.map((p) => {
           const slot = roster[p];
           return slot.playerId
@@ -38,23 +48,13 @@ export async function POST(req: Request) {
             : Promise.resolve(null);
         })
       );
-      return results;
-    };
 
-    const [stats1, stats2] = await Promise.all([
-      fetchAll(roster1),
-      fetchAll(roster2),
-    ]);
+    const [stats1, stats2] = await Promise.all([fetchAll(roster1), fetchAll(roster2)]);
 
     let team1Score = 0;
     let team2Score = 0;
-
-    stats1.forEach((s) => {
-      if (s) team1Score += powerScore(s.pts, s.reb, s.ast, s.stl, s.blk);
-    });
-    stats2.forEach((s) => {
-      if (s) team2Score += powerScore(s.pts, s.reb, s.ast, s.stl, s.blk);
-    });
+    stats1.forEach((s) => { if (s) team1Score += powerScore(s.pts, s.reb, s.ast, s.stl, s.blk); });
+    stats2.forEach((s) => { if (s) team2Score += powerScore(s.pts, s.reb, s.ast, s.stl, s.blk); });
 
     const winner: 1 | 2 | null =
       team1Score > team2Score ? 1 : team2Score > team1Score ? 2 : null;
@@ -63,6 +63,8 @@ export async function POST(req: Request) {
       winner,
       team1Score: Math.round(team1Score * 10) / 10,
       team2Score: Math.round(team2Score * 10) / 10,
+      playerStats1: buildStatsMap(roster1, stats1),
+      playerStats2: buildStatsMap(roster2, stats2),
     });
   } catch (e) {
     return NextResponse.json(

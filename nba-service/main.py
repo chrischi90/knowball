@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import unicodedata
 from pathlib import Path
@@ -173,17 +174,36 @@ def _strip_team_suffix(name: str) -> str:
 # Works for both active_only and all_time: static HTML, no JS rendering issues.
 # ---------------------------------------------------------------------------
 
-# Process-level cache: the 5 parallel player stat fetches share one BR HTTP call per season
+# Process-level cache: shared across concurrent player stat fetches
 _br_season_cache: dict[int, list] = {}
+_br_fetch_lock = threading.Lock()
+_br_last_fetch_time: float = 0.0
+_BR_MIN_INTERVAL = 0.35  # seconds between BR HTTP calls to avoid 429s
 
 
 def _get_br_season_totals(season_end_year: int) -> list:
-    if season_end_year not in _br_season_cache:
-        logger.info("BR: fetching player_season_totals for %d", season_end_year)
+    # Fast path: already in memory cache
+    if season_end_year in _br_season_cache:
+        return _br_season_cache[season_end_year]
+
+    with _br_fetch_lock:
+        # Re-check after acquiring lock (another thread may have fetched it)
+        if season_end_year in _br_season_cache:
+            return _br_season_cache[season_end_year]
+
+        # Rate limit: minimum interval between BR HTTP calls
+        global _br_last_fetch_time
+        elapsed = time.time() - _br_last_fetch_time
+        if elapsed < _BR_MIN_INTERVAL:
+            time.sleep(_BR_MIN_INTERVAL - elapsed)
+
+        logger.info("BR: fetching players_season_totals for %d", season_end_year)
         _br_season_cache[season_end_year] = br_client.players_season_totals(
             season_end_year=season_end_year
         )
+        _br_last_fetch_time = time.time()
         logger.info("BR: got %d players for %d", len(_br_season_cache[season_end_year]), season_end_year)
+
     return _br_season_cache[season_end_year]
 
 

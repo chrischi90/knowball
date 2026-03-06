@@ -21,6 +21,7 @@ export default function GamePage() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [simulating, setSimulating] = useState(false);
 
   // Load teams once for wheel
   useEffect(() => {
@@ -37,15 +38,20 @@ export default function GamePage() {
       .catch(() => setError("Failed to load teams"));
   }, [gameId]);
 
+  // Clear loading screen when simulation result arrives
+  useEffect(() => {
+    if (game?.phase === "completed") setSimulating(false);
+  }, [game?.phase]);
+
   // Socket: game_state and wheel_result
   useEffect(() => {
     const socket = getSocket();
     const onState = (state: GameState) => setGame(state);
-    const onWheel = () => {
-      setGame((g) => (g ? { ...g } : null));
-    };
+    const onWheel = () => { setGame((g) => (g ? { ...g } : null)); };
+    const onSimStarted = () => setSimulating(true);
     socket.on("game_state", onState);
     socket.on("wheel_result", onWheel);
+    socket.on("simulation_started", onSimStarted);
 
     const inRoom = gameId && gameId.length === 8;
     if (inRoom && !game) {
@@ -70,6 +76,7 @@ export default function GamePage() {
     return () => {
       socket.off("game_state", onState);
       socket.off("wheel_result", onWheel);
+      socket.off("simulation_started", onSimStarted);
     };
   }, [gameId]);
 
@@ -131,6 +138,9 @@ export default function GamePage() {
 
   const handleRunSimulation = useCallback(async () => {
     if (!game) return;
+    setSimulating(true);
+    const socket = getSocket();
+    socket.emit("simulation_started", { gameId });
     try {
       const res = await fetch("/api/simulate", {
         method: "POST",
@@ -143,9 +153,9 @@ export default function GamePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Simulation failed");
-      const socket = getSocket();
       socket.emit("simulation_result", { gameId, result: data });
     } catch (e) {
+      setSimulating(false);
       setError(e instanceof Error ? e.message : "Simulation failed");
     }
   }, [game, gameId]);
@@ -180,6 +190,24 @@ export default function GamePage() {
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1200);
   }, [gameId]);
+
+  if (simulating) {
+    return (
+      <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
+        <div className="text-center">
+          <p className="font-funnel-display text-3xl font-semibold text-white mb-3 animate-pulse">
+            Simulating game…
+          </p>
+          <p className="text-zinc-400 text-lg">Calculating stats for both rosters</p>
+          <div className="mt-6 flex justify-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-orange-500 animate-bounce [animation-delay:-0.3s]" />
+            <span className="w-2 h-2 rounded-full bg-orange-500 animate-bounce [animation-delay:-0.15s]" />
+            <span className="w-2 h-2 rounded-full bg-orange-500 animate-bounce" />
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   if (!gameId) {
     return (

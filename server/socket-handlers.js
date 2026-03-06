@@ -277,6 +277,10 @@ function registerSocketHandlers(io) {
       }
     );
 
+    socket.on("simulation_started", ({ gameId }) => {
+      io.to(gameId).emit("simulation_started");
+    });
+
     socket.on("simulation_result", ({ gameId, result }) => {
       const game = getGame(gameId);
       if (!game) return;
