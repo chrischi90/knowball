@@ -260,7 +260,13 @@ export default function SoloPage() {
       <div className="max-w-lg mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-4 pt-2">
-          <span className="text-zinc-400 text-sm">Solo Draft</span>
+          {hasSpun ? (
+            <span className="rounded-full bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-300">
+              {gameMode === "all_time" ? "All-Time" : "Active Only"}
+            </span>
+          ) : (
+            <span />
+          )}
           <button
             type="button"
             onClick={() => setShowLeaveModal(true)}
