@@ -23,6 +23,8 @@ services:
     buildCommand: pip install -r nba-service/requirements.txt
     startCommand: cd nba-service && uvicorn main:app --host 0.0.0.0 --port 10000
     envVars:
+      - key: DATABASE_URL
+        sync: false
       - key: NEXT_PUBLIC_APP_ORIGIN
         sync: false
     healthCheckPath: /health
