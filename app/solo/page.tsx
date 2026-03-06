@@ -11,7 +11,7 @@ import type { Roster, GameMode } from "@/lib/game-types";
 
 const DEV_PREFILL = false;
 const DEV_ROSTER: Roster = {
-  PG: { position: "PG", playerId: "201939",  playerName: "Steph Curry (GS)",      teamId: "1610612744" }, // Golden State Warriors
+  PG: { position: "PG", playerId: "201939",  playerName: "Stephen Curry (GSW)",   teamId: "1610612744" }, // Golden State Warriors
   SG: { position: "SG", playerId: "1630162", playerName: "Anthony Edwards (MIN)",  teamId: "1610612750" }, // Minnesota Timberwolves
   SF: { position: "SF", playerId: "202695",  playerName: "Kawhi Leonard (SAS)",    teamId: "1610612759" }, // San Antonio Spurs
   PF: { position: "PF", playerId: "2544",    playerName: "LeBron James (MIA)",     teamId: "1610612748" }, // Miami Heat
@@ -114,7 +114,7 @@ export default function SoloPage() {
       const res = await fetch("/api/season", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ roster }),
+        body: JSON.stringify({ roster, gameMode }),
       });
       const data = await res.json();
       if (data.error) {

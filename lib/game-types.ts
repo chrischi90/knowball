@@ -46,6 +46,8 @@ export type GameState = {
     team2Score: number;
     team1Stats?: Record<string, number>;
     team2Stats?: Record<string, number>;
+    playerStats1?: Record<string, { pts: number; reb: number; ast: number; stl: number; blk: number } | null>;
+    playerStats2?: Record<string, { pts: number; reb: number; ast: number; stl: number; blk: number } | null>;
   } | null;
 };
 
