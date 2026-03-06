@@ -138,6 +138,7 @@ export default function GamePage() {
         body: JSON.stringify({
           roster1: game.rosters[1],
           roster2: game.rosters[2],
+          gameMode: game.gameMode,
         }),
       });
       const data = await res.json();

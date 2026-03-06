@@ -1,18 +1,28 @@
 """
 NBA data service. Teams and rosters served from Neon Postgres DB.
-Player stats still fetched from nba_api (one-time at simulation, with disk cache).
+Player stats: Basketball Reference is primary (more permissive), nba_api is fallback.
+Stats are mode-aware: active_only=current season, all_time=career stint with selected team.
 """
 import json
+import logging
 import os
+import re
 import time
+import unicodedata
 from pathlib import Path
 from typing import Optional
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("nba_service")
 
 import psycopg2
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-# nba_api — only needed for the /players/{id}/stats endpoint
+# basketball_reference_web_scraper — primary stats source
+from basketball_reference_web_scraper import client as br_client
+
+# nba_api — fallback stats source only
 import nba_api.stats.library.http as _nba_stats_http
 
 _nba_stats_http.NBAStatsHTTP.headers.update({
@@ -137,9 +147,179 @@ def list_team_players(team_id: str, active_only: bool = False):
         raise HTTPException(status_code=502, detail=str(e))
 
 
-# Persistent disk cache for player stats. Survives service restarts so a successful
-# fetch is never lost. Only successful (non-None) results are stored.
+# ---------------------------------------------------------------------------
+# Constants & helpers for Basketball Reference
+# ---------------------------------------------------------------------------
+
+CURRENT_SEASON = "2025-26"
+
+_SUFFIX_RE = re.compile(r"\s+(jr\.?|sr\.?|ii|iii|iv|v)$", re.IGNORECASE)
+
+
+def _normalize_name(name: str) -> str:
+    """Lowercase, strip accents, remove generational suffixes."""
+    n = unicodedata.normalize("NFD", name).encode("ascii", "ignore").decode("ascii")
+    n = _SUFFIX_RE.sub("", n.strip().lower()).strip()
+    return n
+
+
+def _strip_team_suffix(name: str) -> str:
+    """Remove ' (ABC)' team suffix: 'Stephen Curry (GSW)' → 'Stephen Curry'."""
+    return re.sub(r"\s+\([A-Z]+\)$", "", (name or "")).strip()
+
+
+# ---------------------------------------------------------------------------
+# Basketball Reference — player_season_totals (league-wide per-season scrape)
+# Works for both active_only and all_time: static HTML, no JS rendering issues.
+# ---------------------------------------------------------------------------
+
+# Process-level cache: the 5 parallel player stat fetches share one BR HTTP call per season
+_br_season_cache: dict[int, list] = {}
+
+
+def _get_br_season_totals(season_end_year: int) -> list:
+    if season_end_year not in _br_season_cache:
+        logger.info("BR: fetching player_season_totals for %d", season_end_year)
+        _br_season_cache[season_end_year] = br_client.players_season_totals(
+            season_end_year=season_end_year
+        )
+        logger.info("BR: got %d players for %d", len(_br_season_cache[season_end_year]), season_end_year)
+    return _br_season_cache[season_end_year]
+
+
+def _fetch_br_seasons(player_name: str, season_end_years: list[int], min_gp: int = 5) -> Optional[dict]:
+    """
+    GP-weighted per-game stats across the given seasons from BR player_season_totals.
+    Used for both active_only (single season [2026]) and all_time (DB-derived seasons).
+    """
+    clean = _strip_team_suffix(player_name)
+    norm = _normalize_name(clean)
+    logger.info("BR fetch: player=%r seasons=%s min_gp=%d", clean, season_end_years, min_gp)
+
+    weighted_rows: list[dict] = []
+    for year in season_end_years:
+        try:
+            totals = _get_br_season_totals(year)
+            matching = [p for p in totals if _normalize_name(p.get("name", "")) == norm]
+            if not matching:
+                logger.info("BR: no match for %r in season %d", clean, year)
+                continue
+            # For traded players: pick the row with the most games
+            best = max(matching, key=lambda p: p.get("games_played", 0))
+            gp = best.get("games_played") or 0
+            if gp < min_gp:
+                logger.info("BR: %r season %d only %d gp (min=%d), skipping", clean, year, gp, min_gp)
+                continue
+            reb = (best.get("offensive_rebounds") or 0) + (best.get("defensive_rebounds") or 0)
+            weighted_rows.append({
+                "g": gp,
+                "pts": (best.get("points") or 0) / gp,
+                "reb": reb / gp,
+                "ast": (best.get("assists") or 0) / gp,
+                "stl": (best.get("steals") or 0) / gp,
+                "blk": (best.get("blocks") or 0) / gp,
+            })
+            logger.info("BR: %r season %d → gp=%d pts=%.1f", clean, year, gp, (best.get("points") or 0) / gp)
+        except Exception as exc:
+            logger.warning("BR: season %d failed for %r: %s", year, clean, exc)
+
+    if not weighted_rows:
+        return None
+
+    total_gp = sum(r["g"] for r in weighted_rows)
+    return {
+        "player_id": "",
+        "gp": total_gp,
+        "pts": sum(r["pts"] * r["g"] for r in weighted_rows) / total_gp,
+        "reb": sum(r["reb"] * r["g"] for r in weighted_rows) / total_gp,
+        "ast": sum(r["ast"] * r["g"] for r in weighted_rows) / total_gp,
+        "stl": sum(r["stl"] * r["g"] for r in weighted_rows) / total_gp,
+        "blk": sum(r["blk"] * r["g"] for r in weighted_rows) / total_gp,
+    }
+
+
+def _get_player_team_seasons(player_id: str, team_id: str) -> list[int]:
+    """
+    Return list of season_end_years for which player_id was on team_id in our DB.
+    Season strings like '2025-26' are converted to end year 2026.
+    """
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT season FROM roster_players WHERE player_id = %s AND team_id = %s",
+                (player_id, team_id),
+            )
+            rows = cur.fetchall()
+        end_years = []
+        for (season_str,) in rows:
+            try:
+                # "2025-26" → 2026, "1999-00" → 2000
+                start_year = int(season_str[:4])
+                end_years.append(start_year + 1)
+            except (ValueError, IndexError):
+                pass
+        return sorted(end_years)
+    except Exception as exc:
+        logger.warning("_get_player_team_seasons failed for player=%s team=%s: %s", player_id, team_id, exc)
+        return []
+
+
+
+
+# ---------------------------------------------------------------------------
+# nba_api fallback
+# ---------------------------------------------------------------------------
+
+
+def _fetch_nba_api_stats(
+    player_id: str,
+    team_id: Optional[str] = None,
+    season_filter: Optional[str] = None,
+) -> Optional[dict]:
+    """Fetch per-game stats from nba_api. Used as fallback when BR scraping fails."""
+    logger.info("nba_api fallback: player_id=%s team_id=%s season_filter=%s", player_id, team_id, season_filter)
+    for attempt in range(3):
+        try:
+            stats = PlayerCareerStats(player_id=player_id, per_mode36="PerGame", timeout=8)
+            dfs = stats.get_data_frames()
+            for df in dfs:
+                if "PTS" not in df.columns or "GP" not in df.columns:
+                    continue
+                if season_filter:
+                    df = df[df["SEASON_ID"] == season_filter]
+                if team_id is not None:
+                    df = df[df["TEAM_ID"] == int(team_id)]
+                df = df[df["GP"] >= 20]
+                total_gp = df["GP"].sum()
+                if total_gp == 0:
+                    logger.info("nba_api: player_id=%s has 0 qualifying GP after filters", player_id)
+                    return None
+                logger.info("nba_api: player_id=%s → total_gp=%d", player_id, total_gp)
+                return {
+                    "player_id": player_id,
+                    "gp": int(total_gp),
+                    "pts": float((df["PTS"] * df["GP"]).sum() / total_gp),
+                    "reb": float((df["REB"] * df["GP"]).sum() / total_gp),
+                    "ast": float((df["AST"] * df["GP"]).sum() / total_gp),
+                    "stl": float((df["STL"] * df["GP"]).sum() / total_gp),
+                    "blk": float((df["BLK"] * df["GP"]).sum() / total_gp),
+                }
+            logger.info("nba_api: player_id=%s no matching dataframe found", player_id)
+            return None
+        except Exception as exc:
+            logger.warning("nba_api attempt %d failed for player_id=%s: %s", attempt, player_id, exc)
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Persistent disk cache
+# ---------------------------------------------------------------------------
+
 _STATS_CACHE_FILE = Path(__file__).parent / "stats_cache.json"
+
 
 def _load_stats_cache() -> dict:
     try:
@@ -149,64 +329,70 @@ def _load_stats_cache() -> dict:
         pass
     return {}
 
+
 def _save_stats_cache(cache: dict) -> None:
     try:
         _STATS_CACHE_FILE.write_text(json.dumps(cache))
     except Exception:
         pass
 
+
 _stats_cache: dict = _load_stats_cache()
 
 
-def _fetch_player_career_per_game(player_id: str, team_id: Optional[str] = None) -> Optional[dict]:
-    """Internal: fetch per-game stats from nba_api. No caching. Retries up to 3 times."""
-    for attempt in range(3):
-        try:
-            stats = PlayerCareerStats(player_id=player_id, per_mode36="PerGame", timeout=30)
-            dfs = stats.get_data_frames()
-            # SeasonTotalsRegularSeason is index 0; has one row per season-team combo
-            for df in dfs:
-                if "PTS" in df.columns and "GP" in df.columns:
-                    if team_id is not None:
-                        # Filter to only seasons with this team; skip TOT rows (TEAM_ID=0)
-                        df = df[df["TEAM_ID"] == int(team_id)]
-                    # Exclude injury-shortened seasons (< 20 GP) so stats reflect healthy play
-                    df = df[df["GP"] >= 20]
-                    total_gp = df["GP"].sum()
-                    if total_gp == 0:
-                        return None
-                    return {
-                        "player_id": player_id,
-                        "gp": int(total_gp),
-                        "pts": float((df["PTS"] * df["GP"]).sum() / total_gp),
-                        "reb": float((df["REB"] * df["GP"]).sum() / total_gp),
-                        "ast": float((df["AST"] * df["GP"]).sum() / total_gp),
-                        "stl": float((df["STL"] * df["GP"]).sum() / total_gp),
-                        "blk": float((df["BLK"] * df["GP"]).sum() / total_gp),
-                    }
-            return None
-        except Exception:
-            if attempt < 2:
-                time.sleep(1.5 * (attempt + 1))
-    return None
+def _get_player_stats(
+    player_id: str,
+    team_id: Optional[str] = None,
+    player_name: Optional[str] = None,
+    game_mode: str = "all_time",
+) -> Optional[dict]:
+    """
+    Fetch per-game stats with BR as primary and nba_api as fallback.
 
-
-def _get_player_career_per_game(player_id: str, team_id: Optional[str] = None) -> Optional[dict]:
-    """Fetch per-game stats. Uses persistent disk cache; only caches successful results."""
-    key = f"{player_id}:{team_id}"
+    active_only: 2025-26 season stats via BR player_season_totals → nba_api fallback.
+    all_time:    career stats scoped to team via BR player_season_totals (DB seasons) → nba_api fallback.
+    """
+    key = f"{player_id}:{team_id}:{game_mode}"
     if key in _stats_cache:
+        logger.info("stats cache hit: %s", key)
         return _stats_cache[key]
-    result = _fetch_player_career_per_game(player_id, team_id)
+
+    result: Optional[dict] = None
+
+    if game_mode == "active_only":
+        if player_name:
+            result = _fetch_br_seasons(player_name, [2026], min_gp=5)
+        if result is None:
+            result = _fetch_nba_api_stats(player_id, team_id=None, season_filter=CURRENT_SEASON)
+    else:  # all_time
+        seasons = _get_player_team_seasons(player_id, team_id) if player_id and team_id else []
+        if player_name and seasons:
+            result = _fetch_br_seasons(player_name, seasons, min_gp=20)
+        if result is None:
+            result = _fetch_nba_api_stats(player_id, team_id)
+
     if result is not None:
+        result["player_id"] = player_id
         _stats_cache[key] = result
         _save_stats_cache(_stats_cache)
+
     return result
 
 
 @app.get("/players/{player_id}/stats")
-def get_player_stats(player_id: str, team_id: Optional[str] = None):
-    """Get per-game stats for simulation. Pass team_id to scope stats to that team's tenure."""
-    result = _get_player_career_per_game(player_id, team_id)
+def get_player_stats(
+    player_id: str,
+    team_id: Optional[str] = None,
+    player_name: Optional[str] = None,
+    game_mode: str = "all_time",
+):
+    """
+    Get per-game stats for simulation.
+    - game_mode=active_only: 2025-26 season only
+    - game_mode=all_time: career stats scoped to team_id tenure
+    Pass player_name (display form OK, e.g. 'Stephen Curry (GSW)') to enable BR primary path.
+    """
+    result = _get_player_stats(player_id, team_id, player_name, game_mode)
     if result is None:
         raise HTTPException(status_code=404, detail="Player stats not found")
     return result

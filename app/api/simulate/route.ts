@@ -3,7 +3,7 @@ import { fetchPlayerStats } from "@/lib/nba-api";
 import type { Roster } from "@/lib/game-types";
 import { POSITIONS } from "@/lib/game-types";
 
-type Body = { roster1: Roster; roster2: Roster };
+type Body = { roster1: Roster; roster2: Roster; gameMode?: string };
 
 function powerScore(pts: number, reb: number, ast: number, stl: number, blk: number): number {
   return pts + reb * 1.2 + ast * 1.5 + stl * 3 + blk * 3;
@@ -12,7 +12,7 @@ function powerScore(pts: number, reb: number, ast: number, stl: number, blk: num
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
-    const { roster1, roster2 } = body;
+    const { roster1, roster2, gameMode } = body;
     if (!roster1 || !roster2) {
       return NextResponse.json(
         { error: "rosters required" },
@@ -34,7 +34,7 @@ export async function POST(req: Request) {
         POSITIONS.map((p) => {
           const slot = roster[p];
           return slot.playerId
-            ? fetchPlayerStats(slot.playerId, slot.teamId).catch(() => null)
+            ? fetchPlayerStats(slot.playerId, slot.teamId, slot.playerName, gameMode).catch(() => null)
             : Promise.resolve(null);
         })
       );
