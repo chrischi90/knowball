@@ -257,7 +257,16 @@ export default function GamePage() {
       )}
       <div className="max-w-lg mx-auto">
         <div className="flex items-center justify-between mb-4">
-          <span className="text-zinc-400 text-sm">Game: {gameId}</span>
+          {game.phase !== "lobby" ? (
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-300">
+                {(game.gameMode ?? "all_time") === "all_time" ? "All-Time" : "Active Only"}
+              </span>
+              <span className="text-zinc-500 text-xs">Game: {gameId}</span>
+            </div>
+          ) : (
+            <span className="text-zinc-400 text-sm">Game: {gameId}</span>
+          )}
           {myNumber && (
             <button
               type="button"

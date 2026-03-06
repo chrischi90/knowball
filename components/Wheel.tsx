@@ -165,36 +165,48 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, myNumber, curren
               const largeArc = 360 / displayTeams.length > 180 ? 1 : 0;
               const pathData = `M ${radius} ${radius} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
               
-              const midAngle = ((startAngle + endAngle) / 2 * Math.PI) / 180;
-              const labelX = radius + labelRadius * Math.cos(midAngle);
-              const labelY = radius + labelRadius * Math.sin(midAngle);
-              
               return (
-                <g key={team.id}>
-                  <path
-                    d={pathData}
-                    fill={colorMap[team.id] || "#4B5563"}
-                    stroke="rgba(255,255,255,0.1)"
-                    strokeWidth="1"
-                  />
-                  <text
-                    x={labelX}
-                    y={labelY}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fill="white"
-                    fontSize="13"
-                    fontWeight="700"
-                    pointerEvents="none"
-                  >
-                    {team.abbreviation}
-                  </text>
-                </g>
+                <path
+                  key={team.id}
+                  d={pathData}
+                  fill={colorMap[team.id] || "#4B5563"}
+                  stroke="rgba(255,255,255,0.1)"
+                  strokeWidth="1"
+                />
               );
             })}
           </svg>
         </div>
         
+        {/* Static text labels - not rotating, position computed from current rotation */}
+        <svg
+          className="absolute inset-0 w-full h-full pointer-events-none z-[5]"
+          viewBox={`0 0 ${wheelSize} ${wheelSize}`}
+        >
+          {displayTeams.map((team, i) => {
+            const startAngle = (i * 360) / displayTeams.length - 90;
+            const endAngle = ((i + 1) * 360) / displayTeams.length - 90;
+            const midAngle = (((startAngle + endAngle) / 2) + rotation) * Math.PI / 180;
+            const labelX = radius + labelRadius * Math.cos(midAngle);
+            const labelY = radius + labelRadius * Math.sin(midAngle);
+            return (
+              <text
+                key={team.id}
+                x={labelX}
+                y={labelY}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill="white"
+                fontSize="13"
+                fontWeight="700"
+                pointerEvents="none"
+              >
+                {team.abbreviation}
+              </text>
+            );
+          })}
+        </svg>
+
         {/* Center Spin Button */}
         <button
           type="button"
