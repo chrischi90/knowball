@@ -12,7 +12,7 @@ type PlayerListProps = {
   takenPlayerIds: string[];
   currentRoster: Roster;
   gameMode?: GameMode;
-  onPick: (playerId: string, playerName: string, position: string, teamId: string) => void;
+  onPick: (playerId: string, playerName: string, position: string, teamId: string, naturalPosition: string) => void;
   onRespin?: () => void;
 };
 
@@ -72,7 +72,7 @@ export function PlayerList({
 
   const handleConfirm = () => {
     if (!selectedPlayer || !selectedPosition) return;
-    onPick(selectedPlayer.id, selectedPlayer.name, selectedPosition, teamId);
+    onPick(selectedPlayer.id, selectedPlayer.name, selectedPosition, teamId, selectedPlayer.position ?? "SF");
     setSelectedPlayer(null);
     setSelectedPosition(null);
     setSearchQuery("");
@@ -183,7 +183,10 @@ export function PlayerList({
               <button
                 key={player.id}
                 type="button"
-                onClick={() => handleSuggestionClick(player)}
+                onMouseDown={(e) => {
+                  e.preventDefault(); // prevent input blur before click registers
+                  handleSuggestionClick(player);
+                }}
                 className={`w-full text-left py-3 px-4 transition ${
                   idx === activeIndex
                     ? "bg-orange-600 text-white"

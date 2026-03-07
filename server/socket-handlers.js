@@ -238,7 +238,7 @@ function registerSocketHandlers(io) {
 
     socket.on(
       "pick",
-      ({ playerId, playerName, position, teamId }, callback) => {
+      ({ playerId, playerName, position, teamId, naturalPosition }, callback) => {
         const gameId = Array.from(socket.rooms).find(
           (r) => r !== socket.id && r.length === 8
         );
@@ -265,7 +265,8 @@ function registerSocketHandlers(io) {
           playerId,
           playerName,
           position,
-          teamId
+          teamId,
+          naturalPosition
         );
         if (!updated) {
           if (typeof callback === "function")

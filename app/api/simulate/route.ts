@@ -10,6 +10,14 @@ function powerScore(pts: number, reb: number, ast: number, stl: number, blk: num
   return pts + reb * 1.2 + ast * 1.5 + stl * 3 + blk * 3;
 }
 
+const POSITION_GROUP: Record<string, number> = { PG: 0, SG: 0, SF: 1, PF: 2, C: 2 };
+
+function positionMismatchMultiplier(natural: string | null, assigned: string): number {
+  if (!natural) return 1.0;
+  const diff = Math.abs((POSITION_GROUP[natural] ?? 1) - (POSITION_GROUP[assigned] ?? 1));
+  return diff === 0 ? 1.0 : diff === 1 ? 0.85 : 0.70;
+}
+
 function buildStatsMap(roster: Roster, stats: (PlayerStats | null)[]): Record<string, PlayerStats | null> {
   const map: Record<string, PlayerStats | null> = {};
   POSITIONS.forEach((p, i) => {
@@ -53,8 +61,18 @@ export async function POST(req: Request) {
 
     let team1Score = 0;
     let team2Score = 0;
-    stats1.forEach((s) => { if (s) team1Score += powerScore(s.pts, s.reb, s.ast, s.stl, s.blk); });
-    stats2.forEach((s) => { if (s) team2Score += powerScore(s.pts, s.reb, s.ast, s.stl, s.blk); });
+    stats1.forEach((s, i) => {
+      if (s) {
+        const slot = roster1[POSITIONS[i]];
+        team1Score += powerScore(s.pts, s.reb, s.ast, s.stl, s.blk) * positionMismatchMultiplier(slot.naturalPosition, POSITIONS[i]);
+      }
+    });
+    stats2.forEach((s, i) => {
+      if (s) {
+        const slot = roster2[POSITIONS[i]];
+        team2Score += powerScore(s.pts, s.reb, s.ast, s.stl, s.blk) * positionMismatchMultiplier(slot.naturalPosition, POSITIONS[i]);
+      }
+    });
 
     const winner: 1 | 2 | null =
       team1Score > team2Score ? 1 : team2Score > team1Score ? 2 : null;

@@ -380,10 +380,11 @@ def _get_player_stats(
     result: Optional[dict] = None
 
     if game_mode == "active_only":
-        if player_name:
-            result = _fetch_br_seasons(player_name, [2026], min_gp=5)
+        seasons = _get_player_team_seasons(player_id, team_id) if player_id and team_id else []
+        if player_name and seasons:
+            result = _fetch_br_seasons(player_name, seasons, min_gp=5)
         if result is None:
-            result = _fetch_nba_api_stats(player_id, team_id=None, season_filter=CURRENT_SEASON)
+            result = _fetch_nba_api_stats(player_id, team_id)
     else:  # all_time
         seasons = _get_player_team_seasons(player_id, team_id) if player_id and team_id else []
         if player_name and seasons:

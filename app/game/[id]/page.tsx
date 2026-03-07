@@ -122,13 +122,13 @@ export default function GamePage() {
     });
   }, []);
 
-  const handlePick = useCallback((playerId: string, playerName: string, position: string, teamId: string) => {
+  const handlePick = useCallback((playerId: string, playerName: string, position: string, teamId: string, naturalPosition: string) => {
     const abbrev = teams.find((t) => t.id === teamId)?.abbreviation;
     const displayName = abbrev ? `${playerName} (${abbrev})` : playerName;
     const socket = getSocket();
     socket.emit(
       "pick",
-      { playerId, playerName: displayName, position, teamId },
+      { playerId, playerName: displayName, position, teamId, naturalPosition },
       (res: { game?: GameState; error?: string }) => {
         if (res.error) setError(res.error);
         if (res.game) setGame(res.game);

@@ -7,7 +7,7 @@ const POSITIONS = ["PG", "SG", "SF", "PF", "C"];
 function createEmptyRosterJS() {
   const roster = {};
   POSITIONS.forEach((p) => {
-    roster[p] = { position: p, playerId: null, playerName: null, teamId: null };
+    roster[p] = { position: p, playerId: null, playerName: null, teamId: null, naturalPosition: null };
   });
   return roster;
 }
@@ -92,7 +92,7 @@ function spinWheel(gameId, teamId, teamName) {
   return game;
 }
 
-function pickPlayer(gameId, playerNumber, playerId, playerName, position, teamId) {
+function pickPlayer(gameId, playerNumber, playerId, playerName, position, teamId, naturalPosition) {
   const game = games.get(gameId);
   if (!game || game.phase !== "drafting") return null;
   if (game.currentTurn !== playerNumber) return null;
@@ -100,7 +100,7 @@ function pickPlayer(gameId, playerNumber, playerId, playerName, position, teamId
   const roster = game.rosters[playerNumber];
   if (!roster[position] || roster[position].playerId) return null;
 
-  roster[position] = { position, playerId, playerName, teamId: teamId ?? null };
+  roster[position] = { position, playerId, playerName, teamId: teamId ?? null, naturalPosition: naturalPosition ?? null };
   game.takenPlayerIds.push(playerId);
   game.wheelTeamId = null;
   game.wheelTeamName = null;

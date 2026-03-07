@@ -11,11 +11,11 @@ import type { Roster, GameMode } from "@/lib/game-types";
 
 const DEV_PREFILL = false;
 const DEV_ROSTER: Roster = {
-  PG: { position: "PG", playerId: "201939",  playerName: "Stephen Curry (GSW)",   teamId: "1610612744" }, // Golden State Warriors
-  SG: { position: "SG", playerId: "1630162", playerName: "Anthony Edwards (MIN)",  teamId: "1610612750" }, // Minnesota Timberwolves
-  SF: { position: "SF", playerId: "202695",  playerName: "Kawhi Leonard (SAS)",    teamId: "1610612759" }, // San Antonio Spurs
-  PF: { position: "PF", playerId: "2544",    playerName: "LeBron James (MIA)",     teamId: "1610612748" }, // Miami Heat
-  C:  { position: "C",  playerId: "203999",   playerName: "Nikola Jokic (DEN)",     teamId: "1610612743" }, // Denver Nuggets
+  PG: { position: "PG", playerId: "201939",  playerName: "Stephen Curry (GSW)",   teamId: "1610612744", naturalPosition: "PG" }, // Golden State Warriors
+  SG: { position: "SG", playerId: "1630162", playerName: "Anthony Edwards (MIN)",  teamId: "1610612750", naturalPosition: "SG" }, // Minnesota Timberwolves
+  SF: { position: "SF", playerId: "202695",  playerName: "Kawhi Leonard (SAS)",    teamId: "1610612759", naturalPosition: "SF" }, // San Antonio Spurs
+  PF: { position: "PF", playerId: "2544",    playerName: "LeBron James (MIA)",     teamId: "1610612748", naturalPosition: "SF" }, // Miami Heat
+  C:  { position: "C",  playerId: "203999",   playerName: "Nikola Jokic (DEN)",     teamId: "1610612743", naturalPosition: "C"  }, // Denver Nuggets
 };
 
 type SeasonResultData = {
@@ -93,11 +93,11 @@ export default function SoloPage() {
     setWheelTeamName(null);
   }, []);
 
-  const handlePick = useCallback((playerId: string, playerName: string, position: string, teamId: string) => {
+  const handlePick = useCallback((playerId: string, playerName: string, position: string, teamId: string, naturalPosition: string) => {
     const abbrev = teams.find((t) => t.id === teamId)?.abbreviation;
     const displayName = abbrev ? `${playerName} (${abbrev})` : playerName;
     setRoster((prev) => {
-      const newRoster = { ...prev, [position]: { position, playerId, playerName: displayName, teamId } };
+      const newRoster = { ...prev, [position]: { position, playerId, playerName: displayName, teamId, naturalPosition } };
       const isFull = POSITIONS.every((p) => newRoster[p].playerId !== null);
       if (isFull) setPhase("simulation");
       return newRoster;
