@@ -10,6 +10,14 @@ function powerScore(pts: number, reb: number, ast: number, stl: number, blk: num
   return pts + reb * 1.2 + ast * 1.5 + stl * 3 + blk * 3;
 }
 
+const POSITION_GROUP: Record<string, number> = { PG: 0, SG: 0, SF: 1, PF: 2, C: 2 };
+
+function positionMismatchMultiplier(natural: string | null, assigned: string): number {
+  if (!natural) return 1.0;
+  const diff = Math.abs((POSITION_GROUP[natural] ?? 1) - (POSITION_GROUP[assigned] ?? 1));
+  return diff === 0 ? 1.0 : diff === 1 ? 0.85 : 0.70;
+}
+
 // Simulate a best-of-7 series. Returns { wins, losses } for the user's team.
 function simulateSeries(pWin: number): { wins: number; losses: number } {
   let wins = 0;
@@ -51,16 +59,20 @@ export async function POST(req: Request) {
     );
 
     // Compute per-player power scores for MVP and team stats
-    const playerScores = statsResults.map((s, i) => ({
-      playerName: roster[POSITIONS[i]].playerName ?? "",
-      position: POSITIONS[i],
-      pts: s?.pts ?? 0,
-      reb: s?.reb ?? 0,
-      ast: s?.ast ?? 0,
-      stl: s?.stl ?? 0,
-      blk: s?.blk ?? 0,
-      score: s ? powerScore(s.pts, s.reb, s.ast, s.stl, s.blk) : 0,
-    }));
+    const playerScores = statsResults.map((s, i) => {
+      const slot = roster[POSITIONS[i]];
+      const multiplier = positionMismatchMultiplier(slot.naturalPosition, POSITIONS[i]);
+      return {
+        playerName: slot.playerName ?? "",
+        position: POSITIONS[i],
+        pts: s?.pts ?? 0,
+        reb: s?.reb ?? 0,
+        ast: s?.ast ?? 0,
+        stl: s?.stl ?? 0,
+        blk: s?.blk ?? 0,
+        score: s ? powerScore(s.pts, s.reb, s.ast, s.stl, s.blk) * multiplier : 0,
+      };
+    });
 
     let teamPower = 0;
     playerScores.forEach((p) => { teamPower += p.score; });

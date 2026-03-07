@@ -4,6 +4,7 @@ Seed script to populate Neon Postgres with NBA teams and historical rosters.
 Data sources:
   - Teams:      nba_api static data (local, no HTTP)
   - Rosters:    basketball_reference_web_scraper players_season_totals (one HTTP call per season)
+              + BBRef team roster pages (supplemental, captures injured/inactive players)
   - Player IDs: nba_api static player data (local, no HTTP) cross-referenced by name
 
 Run locally (NOT on Render):
@@ -17,6 +18,8 @@ import os
 import re
 import time
 import unicodedata
+
+import requests
 
 import psycopg2
 from basketball_reference_web_scraper import client
@@ -227,6 +230,166 @@ def seed_all_seasons(conn, full_name_to_id: dict, exact_lookup: dict, norm_looku
     print(f"\nAll seasons done. {total_inserted} total rows inserted, {total_unmatched} unmatched.")
 
 
+# BBRef uses different abbreviations for a handful of teams
+_NBA_API_ABBREV_TO_BREF = {
+    "PHX": "PHO",  # Phoenix Suns
+    "BKN": "BRK",  # Brooklyn Nets
+    "CHA": "CHO",  # Charlotte Hornets
+}
+
+_BREF_POS_CSK_TO_SHORT = {
+    "1": "PG",
+    "2": "SG",
+    "3": "SF",
+    "4": "PF",
+    "5": "C",
+}
+
+_BREF_ROSTER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+}
+
+CURRENT_ROSTER_SEASON = "2025-26"
+CURRENT_ROSTER_END_YEAR = 2026
+
+
+def _parse_bref_roster_page(html: str) -> list[dict]:
+    """
+    Parse a BBRef team roster page HTML.
+    Returns list of {name, position, jersey} dicts for all players,
+    including injured/inactive players who have an empty jersey number.
+    """
+    idx = html.find('id="roster"')
+    if idx == -1:
+        return []
+
+    # Clamp to just this table to avoid bleeding into other tables on the page
+    end_idx = html.find("</table>", idx)
+    chunk = html[idx: end_idx + len("</table>") if end_idx != -1 else idx + 20000]
+
+    # Match every <tr> row in the table body
+    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", chunk, re.DOTALL)
+    players = []
+    for row in rows:
+        name_m = re.search(r'data-stat="player"[^>]*>.*?<a[^>]*>([^<]+)</a>', row, re.DOTALL)
+        if not name_m:
+            continue  # header row or empty row
+
+        name = name_m.group(1).strip()
+
+        pos_m = re.search(r'data-stat="pos"[^>]*csk="(\d+)"', row)
+        position = _BREF_POS_CSK_TO_SHORT.get(pos_m.group(1) if pos_m else "", "SF")
+
+        jersey_m = re.search(r'data-stat="number"[^>]*>\s*([^<\s]*)\s*</th>', row)
+        jersey = (jersey_m.group(1).strip() if jersey_m else "").replace("&nbsp;", "")
+
+        players.append({"name": name, "position": position, "jersey": jersey})
+
+    return players
+
+
+def seed_current_rosters_from_bref(
+    conn,
+    full_name_to_id: dict,
+    exact_lookup: dict,
+    norm_lookup: dict,
+):
+    """
+    Supplemental pass: scrape BBRef team roster pages for the current season
+    and insert any players missing from roster_players (e.g. injured players
+    who haven't posted stats yet).
+
+    Safe to run after seed_all_seasons — uses ON CONFLICT DO NOTHING.
+    """
+    team_rows = []
+    for t in static_teams.get_teams():
+        tid = str(t["id"])
+        abbrev = _NBA_API_ABBREV_TO_BREF.get(t["abbreviation"], t["abbreviation"])
+        team_rows.append({"full_name": t["full_name"], "id": tid, "bref_abbrev": abbrev})
+
+    total_inserted = 0
+    total_unmatched = 0
+
+    for i, team in enumerate(team_rows):
+        url = f"https://www.basketball-reference.com/teams/{team['bref_abbrev']}/{CURRENT_ROSTER_END_YEAR}.html"
+        try:
+            resp = requests.get(url, headers=_BREF_ROSTER_HEADERS, timeout=15)
+            resp.raise_for_status()
+            resp.encoding = "utf-8"  # BBRef is UTF-8; requests sometimes misdetects it
+        except Exception as e:
+            print(f"  [{team['full_name']}] ERROR fetching {url}: {e}")
+            if i < len(team_rows) - 1:
+                time.sleep(REQUEST_DELAY)
+            continue
+
+        players = _parse_bref_roster_page(resp.text)
+        if not players:
+            print(f"  [{team['full_name']}] WARNING: no players parsed from roster page")
+            if i < len(team_rows) - 1:
+                time.sleep(REQUEST_DELAY)
+            continue
+
+        rows_to_insert = []
+        for p in players:
+            nba_id = lookup_player_id(p["name"], exact_lookup, norm_lookup)
+            if nba_id is None:
+                total_unmatched += 1
+                print(f"    unmatched: {p['name']!r}")
+                continue
+            rows_to_insert.append((
+                nba_id, team["id"], CURRENT_ROSTER_SEASON,
+                p["name"], p["position"], p["jersey"],
+            ))
+
+        # Replace the team's current-season roster entirely so traded players
+        # don't linger on their old team. Only do this if the scrape looks
+        # complete (≥10 players) to guard against partial/failed pages.
+        if rows_to_insert and len(players) >= 10:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM roster_players WHERE team_id = %s AND season = %s",
+                    (team["id"], CURRENT_ROSTER_SEASON),
+                )
+                cur.executemany(
+                    """
+                    INSERT INTO roster_players (player_id, team_id, season, player_name, position, jersey)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (player_id, team_id, season) DO NOTHING
+                    """,
+                    rows_to_insert,
+                )
+                inserted = cur.rowcount
+            conn.commit()
+            total_inserted += inserted
+            print(f"  [{team['full_name']}] roster replaced: {inserted} players, {total_unmatched} unmatched")
+        elif rows_to_insert:
+            # Too few players scraped — fall back to supplement-only to be safe
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    INSERT INTO roster_players (player_id, team_id, season, player_name, position, jersey)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (player_id, team_id, season) DO NOTHING
+                    """,
+                    rows_to_insert,
+                )
+                inserted = cur.rowcount
+            conn.commit()
+            total_inserted += inserted
+            print(f"  [{team['full_name']}] WARNING: only {len(players)} players scraped, supplemented {inserted}")
+        else:
+            print(f"  [{team['full_name']}] 0 insertable rows")
+
+        if i < len(team_rows) - 1:
+            time.sleep(REQUEST_DELAY)
+
+    print(f"\nRoster scrape done. {total_inserted} players inserted across 30 teams, {total_unmatched} unmatched.")
+
+
 def main():
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
@@ -246,6 +409,9 @@ def main():
     print(f"  {len(exact_lookup)} players in static dataset.")
 
     seed_all_seasons(conn, full_name_to_id, exact_lookup, norm_lookup)
+
+    print(f"\nScraping current-season ({CURRENT_ROSTER_SEASON}) rosters from BBRef (captures injured/inactive players)...")
+    seed_current_rosters_from_bref(conn, full_name_to_id, exact_lookup, norm_lookup)
 
     conn.close()
     print("\nDone! Verify with:")
