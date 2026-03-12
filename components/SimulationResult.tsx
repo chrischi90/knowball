@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { buildShareUrl, encode2PShareData } from "@/lib/share-utils";
 
 type PlayerStat = { pts: number; reb: number; ast: number; stl: number; blk: number } | null;
 
@@ -24,6 +26,109 @@ function getPlayerHeadshot(playerId: string): string {
   return `https://cdn.nba.com/headshots/nba/latest/1040x760/${playerId}.png`;
 }
 
+function buildTweetText2P(result: SimulationResultProps["result"]): string {
+  const winnerText =
+    result.winner === 1
+      ? "Player 1 Wins!"
+      : result.winner === 2
+        ? "Player 2 Wins!"
+        : "It's a Tie!";
+  return `Which team is better? 🏀\n\nPlayer 1: ${result.team1Score} — Player 2: ${result.team2Score}\n${winnerText}`;
+}
+
+type ShareModal2PProps = {
+  result: SimulationResultProps["result"];
+  roster1: SimulationResultProps["roster1"];
+  roster2: SimulationResultProps["roster2"];
+  winnerText: string;
+  onClose: () => void;
+};
+
+function ShareModal2P({ result, roster1, roster2, winnerText, onClose }: ShareModal2PProps) {
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  const { winner, team1Score, team2Score } = result;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-sm mx-4 rounded-xl bg-zinc-900 border border-zinc-700 p-6 space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute top-3 right-3 text-zinc-400 hover:text-white text-xl leading-none"
+        >
+          ×
+        </button>
+
+        <div className="text-center">
+          <p className="font-funnel-display text-white text-lg font-semibold">Knowball</p>
+          <p className="text-xs text-zinc-500 mt-0.5">2-Player Matchup</p>
+        </div>
+
+        {/* Scores */}
+        <div className="grid grid-cols-2 gap-4 text-center">
+          <div>
+            <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Player 1</p>
+            <p className={`text-4xl font-bold ${winner === 1 ? "text-green-400" : winner === 2 ? "text-red-400" : "text-white"}`}>
+              {team1Score}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Player 2</p>
+            <p className={`text-4xl font-bold ${winner === 2 ? "text-green-400" : winner === 1 ? "text-red-400" : "text-white"}`}>
+              {team2Score}
+            </p>
+          </div>
+        </div>
+
+        <p className="text-center font-funnel-display font-semibold text-orange-400">{winnerText}</p>
+
+        {/* Roster 1 */}
+        <div>
+          <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Player 1 Roster</p>
+          <ul className="space-y-1 text-sm">
+            {POSITIONS.map((pos) => (
+              <li key={pos} className="flex justify-between gap-2">
+                <span className="text-zinc-500 w-8">{pos}</span>
+                <span className="text-white">{roster1[pos]?.playerName || "—"}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Roster 2 */}
+        <div>
+          <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Player 2 Roster</p>
+          <ul className="space-y-1 text-sm">
+            {POSITIONS.map((pos) => (
+              <li key={pos} className="flex justify-between gap-2">
+                <span className="text-zinc-500 w-8">{pos}</span>
+                <span className="text-white">{roster2[pos]?.playerName || "—"}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <p className="text-xs text-zinc-500 text-center pt-1">
+          Twitter will automatically show your results card in the tweet
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function SimulationResult({
   result,
   roster1,
@@ -32,7 +137,16 @@ export function SimulationResult({
   onRematch,
 }: SimulationResultProps) {
   const router = useRouter();
+  const [showShareModal, setShowShareModal] = useState(false);
   const { winner, team1Score, team2Score, playerStats1, playerStats2 } = result;
+
+  function handleShare() {
+    const text = buildTweetText2P(result);
+    const shareUrl = buildShareUrl("2p", encode2PShareData(roster1, roster2, result));
+    const tweetUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`;
+    window.open(tweetUrl, "_blank", "noopener,noreferrer");
+    setShowShareModal(true);
+  }
 
   const winnerText =
     winner === 1
@@ -84,6 +198,7 @@ export function SimulationResult({
   );
 
   return (
+    <>
     <div className="mt-8 rounded-lg bg-zinc-900 p-6 border-2 border-orange-500/50">
       <h2 className="text-3xl font-bold text-center text-orange-400 mb-2">
         {winnerText}
@@ -108,22 +223,45 @@ export function SimulationResult({
       </div>
 
       {/* Action Buttons */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="space-y-3">
         <button
           type="button"
           onClick={onRematch}
-          className="py-2.5 rounded-md bg-orange-600 hover:bg-orange-500 font-semibold text-white transition"
+          className="w-full py-2.5 rounded-md bg-orange-600 hover:bg-orange-500 font-semibold text-white transition"
         >
           Rematch
         </button>
-        <button
-          type="button"
-          onClick={() => router.push("/")}
-          className="py-2.5 rounded-md bg-zinc-700 hover:bg-zinc-600 font-semibold text-white transition"
-        >
-          New Game
-        </button>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={handleShare}
+            className="flex-1 py-2.5 rounded-md bg-sky-600 hover:bg-sky-500 font-semibold text-white transition flex items-center justify-center gap-2"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.738l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.91-5.622Zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+            </svg>
+            Share
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push("/")}
+            className="flex-1 py-2.5 rounded-md bg-zinc-700 hover:bg-zinc-600 font-semibold text-white transition"
+          >
+            New Game
+          </button>
+        </div>
       </div>
     </div>
+
+    {showShareModal && (
+      <ShareModal2P
+        result={result}
+        roster1={roster1}
+        roster2={roster2}
+        winnerText={winnerText}
+        onClose={() => setShowShareModal(false)}
+      />
+    )}
+  </>
   );
 }

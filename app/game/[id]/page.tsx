@@ -23,6 +23,13 @@ export default function GamePage() {
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [simulating, setSimulating] = useState(false);
 
+  // Persist playerNumber to sessionStorage so a reconnecting socket can reclaim its slot
+  useEffect(() => {
+    if (playerNumber !== null) {
+      sessionStorage.setItem(`knowball:${gameId}:player`, playerNumber.toString());
+    }
+  }, [playerNumber, gameId]);
+
   // Load teams once for wheel
   useEffect(() => {
     fetch("/api/teams")
@@ -46,7 +53,17 @@ export default function GamePage() {
   // Socket: game_state and wheel_result
   useEffect(() => {
     const socket = getSocket();
-    const onState = (state: GameState) => setGame(state);
+    const onState = (state: GameState) => {
+      setGame(state);
+      // Reaffirm playerNumber from socket ID — important after rematch
+      // since the server refreshes stored socket IDs at that point.
+      setPlayerNumber((prev) => {
+        const currentSocket = getSocket();
+        if (state.player1?.socketId === currentSocket.id) return 1;
+        if (state.player2?.socketId === currentSocket.id) return 2;
+        return prev;
+      });
+    };
     const onWheel = () => { setGame((g) => (g ? { ...g } : null)); };
     const onSimStarted = () => setSimulating(true);
     socket.on("game_state", onState);
@@ -61,7 +78,10 @@ export default function GamePage() {
           if (state.player1?.socketId === socket.id) setPlayerNumber(1);
           else if (state.player2?.socketId === socket.id) setPlayerNumber(2);
         } else {
-          socket.emit("join_game", { gameId }, (res: { game?: GameState; playerNumber?: number; error?: string }) => {
+          // Pass any saved playerNumber so a reconnected socket can reclaim its slot
+          const savedNum = sessionStorage.getItem(`knowball:${gameId}:player`);
+          const claimPlayerNumber = savedNum ? parseInt(savedNum) : undefined;
+          socket.emit("join_game", { gameId, claimPlayerNumber }, (res: { game?: GameState; playerNumber?: number; error?: string }) => {
             if (res.game) {
               setGame(res.game);
               if (res.playerNumber) setPlayerNumber(res.playerNumber as 1 | 2);
@@ -164,7 +184,12 @@ export default function GamePage() {
     const socket = getSocket();
     socket.emit("rematch", { gameId }, (res: { game?: GameState; error?: string }) => {
       if (res.error) setError(res.error);
-      if (res.game) setGame(res.game);
+      if (res.game) {
+        setGame(res.game);
+        // Re-affirm playerNumber from the returned game state
+        if (res.game.player1?.socketId === socket.id) setPlayerNumber(1);
+        else if (res.game.player2?.socketId === socket.id) setPlayerNumber(2);
+      }
     });
   }, [gameId]);
 

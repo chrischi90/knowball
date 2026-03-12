@@ -144,6 +144,7 @@ function rematchGame(gameId) {
   game.rosters = { 1: createEmptyRosterJS(), 2: createEmptyRosterJS() };
   game.takenPlayerIds = [];
   game.simulationResult = null;
+  game.firstDrafter = null;
   return game;
 }
 

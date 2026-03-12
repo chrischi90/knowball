@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Roster } from "@/lib/game-types";
 import { POSITIONS } from "@/lib/game-types";
+import { buildShareUrl, encodeSoloShareData } from "@/lib/share-utils";
 
 type MvpData = {
   playerName: string;
@@ -68,9 +69,117 @@ function RevealBox({ visible, children }: { visible: boolean; children: React.Re
   );
 }
 
+function buildTweetText(result: SeasonResultData, roster: Roster): string {
+  const isChampion = result.playoffResult === "Champion";
+  const madeFinals = result.playoffResult === "NBA Finals";
+  const headline = isChampion
+    ? "🏆 NBA Champion!"
+    : madeFinals
+    ? "Made the Finals!"
+    : result.madePlayoffs
+    ? "Made the Playoffs!"
+    : "Missed the Playoffs";
+
+  const rosterLines = POSITIONS.map((pos) => {
+    const name = roster[pos].playerName || "—";
+    return `${pos.padEnd(3)} ${name}`;
+  }).join("\n");
+
+  return `Can you draft a squad to beat mine?\n\n${rosterLines}\n\nSeason: ${result.wins}-${result.losses}\n${headline}`;
+}
+
+type ShareModalProps = {
+  result: SeasonResultData;
+  roster: Roster;
+  headline: string;
+  headlineColor: string;
+  onClose: () => void;
+};
+
+function ShareModal({ result, roster, headline, headlineColor, onClose }: ShareModalProps) {
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-sm mx-4 rounded-xl bg-zinc-900 border border-zinc-700 p-6 space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute top-3 right-3 text-zinc-400 hover:text-white text-xl leading-none"
+        >
+          ×
+        </button>
+
+        <p className="font-funnel-display text-white text-lg font-semibold text-center">Knowball</p>
+
+        {/* Roster */}
+        <div>
+          <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Your Roster</p>
+          <ul className="space-y-1 text-sm">
+            {POSITIONS.map((pos) => (
+              <li key={pos} className="flex justify-between gap-2">
+                <span className="text-zinc-500 w-8">{pos}</span>
+                <span className="text-white">{roster[pos].playerName || "—"}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Record */}
+        <div className="text-center">
+          <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1">Regular Season</p>
+          <div className="flex items-baseline justify-center gap-2">
+            <span className="text-4xl font-bold text-green-400">{result.wins}</span>
+            <span className="text-2xl text-zinc-500">–</span>
+            <span className="text-4xl font-bold text-red-400">{result.losses}</span>
+          </div>
+        </div>
+
+        {/* Postseason */}
+        <div>
+          <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Postseason</p>
+          <p className={`font-funnel-display text-base font-semibold mb-2 ${headlineColor}`}>{headline}</p>
+          {result.madePlayoffs && result.rounds.length > 0 && (
+            <ul className="space-y-1 text-sm">
+              {result.rounds.map((r) => {
+                const won = r.wins === 4;
+                return (
+                  <li key={r.name} className="flex justify-between items-center">
+                    <span className="text-zinc-300">{r.name}</span>
+                    <span className={`font-mono font-semibold ${won ? "text-green-400" : "text-red-400"}`}>
+                      {r.wins}–{r.losses} {won ? "W" : "L"}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        <p className="text-xs text-zinc-500 text-center pt-1">
+          Twitter will automatically show your results card in the tweet
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function RevealResult({ result, roster, onPlayAgain }: Props) {
   const router = useRouter();
   const [revealStep, setRevealStep] = useState(0);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   const { wins, losses, teamPower, playerScores, madePlayoffs, playoffResult, rounds, badges, mvp } = result;
 
@@ -92,6 +201,14 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
     : madePlayoffs
     ? "text-green-400"
     : "text-zinc-400";
+
+  function handleShare() {
+    const text = buildTweetText(result, roster);
+    const shareUrl = buildShareUrl("solo", encodeSoloShareData(roster, result));
+    const tweetUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`;
+    window.open(tweetUrl, "_blank", "noopener,noreferrer");
+    setShowShareModal(true);
+  }
 
   useEffect(() => {
     // Increment revealStep every REVEAL_DELAY_MS until STEP_ACTIONS
@@ -299,16 +416,38 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
             >
               Draft Again
             </button>
-            <button
-              type="button"
-              onClick={() => router.push("/")}
-              className="w-full py-3.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 font-semibold transition"
-            >
-              Home
-            </button>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={handleShare}
+                className="flex-1 py-3.5 rounded-lg bg-sky-600 hover:bg-sky-500 font-semibold transition flex items-center justify-center gap-2"
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.738l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.91-5.622Zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                </svg>
+                Share
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/")}
+                className="flex-1 py-3.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 font-semibold transition"
+              >
+                Home
+              </button>
+            </div>
           </div>
         </RevealBox>
       </div>
+
+      {showShareModal && (
+        <ShareModal
+          result={result}
+          roster={roster}
+          headline={headline}
+          headlineColor={headlineColor}
+          onClose={() => setShowShareModal(false)}
+        />
+      )}
     </main>
   );
 }
