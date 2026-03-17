@@ -59,10 +59,21 @@ function registerSocketHandlers(io) {
         return;
       }
       const inRoom = socket.rooms.has(gameId);
-      if (inRoom && typeof callback === "function") callback(game);
+      if (inRoom) {
+        // Re-sync socket.data.playerNumber in case it was cleared (e.g. after
+        // a hot-reload in dev or a brief reconnect that kept the socket in room)
+        if (!socket.data.playerNumber) {
+          const pNum = getPlayerNumber(game, socket.id);
+          if (pNum) {
+            socket.data.playerNumber = pNum;
+            socket.data.gameId = gameId;
+          }
+        }
+        if (typeof callback === "function") callback(game);
+      }
     });
 
-    socket.on("join_game", ({ gameId }, callback) => {
+    socket.on("join_game", ({ gameId, claimPlayerNumber }, callback) => {
       try {
         const game = getGame(gameId);
         if (!game) {
@@ -71,6 +82,20 @@ function registerSocketHandlers(io) {
           return;
         }
         if (game.player1 && game.player2) {
+          // Full game: allow a reconnecting player to reclaim their slot using
+          // the playerNumber they saved client-side before disconnecting.
+          const claimNum = Number(claimPlayerNumber);
+          if (claimNum === 1 || claimNum === 2) {
+            socket.join(gameId);
+            socket.data.playerNumber = claimNum;
+            socket.data.gameId = gameId;
+            if (claimNum === 1 && game.player1) game.player1.socketId = socket.id;
+            if (claimNum === 2 && game.player2) game.player2.socketId = socket.id;
+            if (typeof callback === "function")
+              callback({ game, playerNumber: claimNum });
+            broadcastGameState(io, gameId, game);
+            return;
+          }
           if (typeof callback === "function")
             callback({ error: "Game is full" });
           return;
@@ -301,6 +326,25 @@ function registerSocketHandlers(io) {
         if (typeof callback === "function")
           callback({ error: "Could not start rematch" });
         return;
+      }
+      // Re-sync socket.data.playerNumber and game socket IDs for all sockets
+      // currently in the room. This handles cases where a socket reconnected
+      // mid-game (new socket ID, cleared socket.data) so player identity is
+      // correctly preserved for the rematch.
+      const room = io.sockets.adapter.rooms.get(gameId);
+      if (room) {
+        room.forEach((sid) => {
+          const s = io.sockets.sockets.get(sid);
+          if (!s) return;
+          const pNum = s.data.playerNumber ?? getPlayerNumber(updated, sid);
+          if (pNum === 1) {
+            s.data.playerNumber = 1;
+            if (updated.player1) updated.player1.socketId = sid;
+          } else if (pNum === 2) {
+            s.data.playerNumber = 2;
+            if (updated.player2) updated.player2.socketId = sid;
+          }
+        });
       }
       if (typeof callback === "function") callback({ game: updated });
       broadcastGameState(io, gameId, updated);
