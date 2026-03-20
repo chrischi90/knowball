@@ -3,6 +3,10 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useCallback } from "react";
 import { getSocket } from "@/lib/socket";
+import {
+  persistMultiplayerSession,
+  readMultiplayerSession,
+} from "@/lib/multiplayer-session";
 import type { GameState, GameMode } from "@/lib/game-types";
 import type { NBATeam } from "@/lib/nba-api";
 import { Wheel } from "@/components/Wheel";
@@ -26,7 +30,7 @@ export default function GamePage() {
   // Persist playerNumber to sessionStorage so a reconnecting socket can reclaim its slot
   useEffect(() => {
     if (playerNumber !== null) {
-      sessionStorage.setItem(`knowball:${gameId}:player`, playerNumber.toString());
+      persistMultiplayerSession(gameId, { playerNumber });
     }
   }, [playerNumber, gameId]);
 
@@ -79,12 +83,20 @@ export default function GamePage() {
           else if (state.player2?.socketId === socket.id) setPlayerNumber(2);
         } else {
           // Pass any saved playerNumber so a reconnected socket can reclaim its slot
-          const savedNum = sessionStorage.getItem(`knowball:${gameId}:player`);
-          const claimPlayerNumber = savedNum ? parseInt(savedNum) : undefined;
-          socket.emit("join_game", { gameId, claimPlayerNumber }, (res: { game?: GameState; playerNumber?: number; error?: string }) => {
+          const {
+            playerNumber: claimPlayerNumber,
+            reconnectToken: claimReconnectToken,
+          } = readMultiplayerSession(gameId);
+          socket.emit("join_game", { gameId, claimPlayerNumber, claimReconnectToken }, (res: { game?: GameState; playerNumber?: number; reconnectToken?: string; error?: string }) => {
             if (res.game) {
               setGame(res.game);
-              if (res.playerNumber) setPlayerNumber(res.playerNumber as 1 | 2);
+              if (res.playerNumber) {
+                setPlayerNumber(res.playerNumber as 1 | 2);
+              }
+              persistMultiplayerSession(gameId, {
+                playerNumber: res.playerNumber,
+                reconnectToken: res.reconnectToken,
+              });
             } else if (res.error && res.error !== "Game not found") {
               setError(res.error);
             }
@@ -120,27 +132,27 @@ export default function GamePage() {
 
   const handleStartDraft = useCallback(() => {
     const socket = getSocket();
-    socket.emit("start_draft", (res: { game?: GameState; error?: string }) => {
+    socket.emit("start_draft", { gameId }, (res: { game?: GameState; error?: string }) => {
       if (res.game) setGame(res.game);
       if (res.error) setError(res.error);
     });
-  }, []);
+  }, [gameId]);
 
   const handleSpin = useCallback((result: { teamIndex: number; teamId: string; teamName: string }) => {
     const socket = getSocket();
-    socket.emit("spin", result, (res: { game?: GameState; error?: string }) => {
+    socket.emit("spin", { ...result, gameId }, (res: { game?: GameState; error?: string }) => {
       if (res.error) setError(res.error);
       if (res.game) setGame(res.game);
     });
-  }, []);
+  }, [gameId]);
 
   const handleRespin = useCallback(() => {
     const socket = getSocket();
-    socket.emit("respin", null, (res: { game?: GameState; error?: string }) => {
+    socket.emit("respin", { gameId }, (res: { game?: GameState; error?: string }) => {
       if (res.error) setError(res.error);
       if (res.game) setGame(res.game);
     });
-  }, []);
+  }, [gameId]);
 
   const handlePick = useCallback((playerId: string, playerName: string, position: string, teamId: string, naturalPosition: string) => {
     const abbrev = teams.find((t) => t.id === teamId)?.abbreviation;
@@ -148,13 +160,13 @@ export default function GamePage() {
     const socket = getSocket();
     socket.emit(
       "pick",
-      { playerId, playerName: displayName, position, teamId, naturalPosition },
+      { gameId, playerId, playerName: displayName, position, teamId, naturalPosition },
       (res: { game?: GameState; error?: string }) => {
         if (res.error) setError(res.error);
         if (res.game) setGame(res.game);
       }
     );
-  }, [teams]);
+  }, [gameId, teams]);
 
   const handleRunSimulation = useCallback(async () => {
     if (!game) return;
@@ -192,6 +204,12 @@ export default function GamePage() {
       }
     });
   }, [gameId]);
+
+  const handleLeaveGame = useCallback(() => {
+    const socket = getSocket();
+    socket.emit("leave_game", { gameId });
+    router.push("/");
+  }, [gameId, router]);
 
   const handleCopyCode = useCallback(async () => {
     if (!gameId) return;
@@ -249,7 +267,7 @@ export default function GamePage() {
         {error && <p className="mt-2 text-red-400 text-sm">{error}</p>}
         <button
           type="button"
-          onClick={() => router.push("/")}
+          onClick={handleLeaveGame}
           className="mt-6 text-zinc-500 hover:text-white"
         >
           Back to lobby
@@ -299,7 +317,7 @@ export default function GamePage() {
                 type="button"
                 onClick={() => {
                   setShowLeaveModal(false);
-                  router.push("/");
+                  handleLeaveGame();
                 }}
                 className="px-4 py-2.5 rounded-md bg-red-600 hover:bg-red-500 text-white font-medium transition"
               >

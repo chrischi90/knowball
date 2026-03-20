@@ -19,10 +19,90 @@ function getPlayerNumber(game, socketId) {
   return null;
 }
 
+const reconnectTokens = new Map();
+
+function generateReconnectToken() {
+  return `${Math.random().toString(36).slice(2, 14)}${Math.random()
+    .toString(36)
+    .slice(2, 14)}`;
+}
+
+function getReconnectTokenRecord(gameId) {
+  if (!reconnectTokens.has(gameId)) {
+    reconnectTokens.set(gameId, { 1: null, 2: null });
+  }
+  return reconnectTokens.get(gameId);
+}
+
+function rotateReconnectToken(gameId, playerNumber) {
+  const record = getReconnectTokenRecord(gameId);
+  const reconnectToken = generateReconnectToken();
+  record[playerNumber] = reconnectToken;
+  return reconnectToken;
+}
+
+function getReconnectToken(gameId, playerNumber) {
+  const record = getReconnectTokenRecord(gameId);
+  return record[playerNumber] ?? null;
+}
+
+function isPlayerSocketActive(io, gameId, game, playerNumber) {
+  const room = io.sockets.adapter.rooms.get(gameId);
+  const socketId =
+    playerNumber === 1 ? game.player1?.socketId : game.player2?.socketId;
+  return Boolean(room && socketId && room.has(socketId));
+}
+
+function isGameRoomId(roomId) {
+  return typeof roomId === "string" && roomId.length === 8;
+}
+
+function leaveOtherGameRooms(socket, keepGameId) {
+  Array.from(socket.rooms).forEach((roomId) => {
+    if (roomId === socket.id) return;
+    if (!isGameRoomId(roomId)) return;
+    if (keepGameId && roomId === keepGameId) return;
+    socket.leave(roomId);
+  });
+}
+
 // Prefer socket.data.playerNumber (set on join) over socket ID lookup.
 // This survives socket ID mismatches (reconnects, same-browser testing, etc.)
 function getPlayerNum(socket, game) {
-  return socket.data.playerNumber ?? getPlayerNumber(game, socket.id);
+  if (!game) return null;
+  const dataNum = socket.data.playerNumber;
+  if (
+    socket.data.gameId === game.gameId &&
+    (dataNum === 1 || dataNum === 2)
+  ) {
+    return dataNum;
+  }
+  return getPlayerNumber(game, socket.id);
+}
+
+function resolveGameForAction(socket, payloadGameId, callback) {
+  const gameId = payloadGameId || socket.data.gameId || null;
+  if (!gameId) {
+    if (typeof callback === "function") callback({ error: "Missing game context" });
+    return null;
+  }
+  const game = getGame(gameId);
+  if (!game) {
+    if (typeof callback === "function") callback({ error: "Game not found" });
+    return null;
+  }
+  if (!socket.rooms.has(gameId)) {
+    if (typeof callback === "function") callback({ error: "Not in this game" });
+    return null;
+  }
+  const pn = getPlayerNum(socket, game);
+  if (!pn) {
+    if (typeof callback === "function") {
+      callback({ error: "Player identity mismatch. Rejoin this game." });
+    }
+    return null;
+  }
+  return { gameId, game, pn };
 }
 
 function broadcastGameState(io, gameId, game) {
@@ -38,13 +118,20 @@ function registerSocketHandlers(io) {
   io.on("connection", (socket) => {
     socket.on("create_game", (callback) => {
       try {
+        leaveOtherGameRooms(socket);
         const game = createGame();
         socket.join(game.gameId);
         const updated = joinGame(game.gameId, socket.id, 1);
+        const reconnectToken = rotateReconnectToken(game.gameId, 1);
         socket.data.playerNumber = 1;
         socket.data.gameId = game.gameId;
         if (typeof callback === "function")
-          callback({ gameId: game.gameId, game: updated || game });
+          callback({
+            gameId: game.gameId,
+            game: updated || game,
+            playerNumber: 1,
+            reconnectToken,
+          });
         broadcastGameState(io, game.gameId, updated || game);
       } catch (e) {
         if (typeof callback === "function")
@@ -70,10 +157,12 @@ function registerSocketHandlers(io) {
           }
         }
         if (typeof callback === "function") callback(game);
+      } else if (typeof callback === "function") {
+        callback(null);
       }
     });
 
-    socket.on("join_game", ({ gameId, claimPlayerNumber }, callback) => {
+    socket.on("join_game", ({ gameId, claimPlayerNumber, claimReconnectToken }, callback) => {
       try {
         const game = getGame(gameId);
         if (!game) {
@@ -83,17 +172,38 @@ function registerSocketHandlers(io) {
         }
         if (game.player1 && game.player2) {
           // Full game: allow a reconnecting player to reclaim their slot using
-          // the playerNumber they saved client-side before disconnecting.
+          // the playerNumber plus a server-issued reconnect token.
           const claimNum = Number(claimPlayerNumber);
-          if (claimNum === 1 || claimNum === 2) {
+          const expectedToken =
+            claimNum === 1 || claimNum === 2
+              ? getReconnectToken(gameId, claimNum)
+              : null;
+          const playerSocketActive =
+            claimNum === 1 || claimNum === 2
+              ? isPlayerSocketActive(io, gameId, game, claimNum)
+              : false;
+          if (
+            (claimNum === 1 || claimNum === 2) &&
+            expectedToken &&
+            claimReconnectToken === expectedToken &&
+            !playerSocketActive
+          ) {
+            leaveOtherGameRooms(socket, gameId);
             socket.join(gameId);
             socket.data.playerNumber = claimNum;
             socket.data.gameId = gameId;
             if (claimNum === 1 && game.player1) game.player1.socketId = socket.id;
             if (claimNum === 2 && game.player2) game.player2.socketId = socket.id;
+            const reconnectToken = rotateReconnectToken(gameId, claimNum);
             if (typeof callback === "function")
-              callback({ game, playerNumber: claimNum });
+              callback({ game, playerNumber: claimNum, reconnectToken });
             broadcastGameState(io, gameId, game);
+            return;
+          }
+          if (claimNum === 1 || claimNum === 2) {
+            if (typeof callback === "function") {
+              callback({ error: "Unable to reclaim player slot" });
+            }
             return;
           }
           if (typeof callback === "function")
@@ -107,11 +217,13 @@ function registerSocketHandlers(io) {
             callback({ error: "Could not join game" });
           return;
         }
+        leaveOtherGameRooms(socket, gameId);
         socket.join(gameId);
+        const reconnectToken = rotateReconnectToken(gameId, playerNumber);
         socket.data.playerNumber = playerNumber;
         socket.data.gameId = gameId;
         if (typeof callback === "function")
-          callback({ game, playerNumber });
+          callback({ game, playerNumber, reconnectToken });
         broadcastGameState(io, gameId, updated);
       } catch (e) {
         if (typeof callback === "function")
@@ -124,6 +236,10 @@ function registerSocketHandlers(io) {
       if (!game || game.phase !== "lobby") {
         if (typeof callback === "function")
           callback({ error: "Game not in lobby" });
+        return;
+      }
+      if (!socket.rooms.has(gameId)) {
+        if (typeof callback === "function") callback({ error: "Not in this game" });
         return;
       }
       if (getPlayerNum(socket, game) !== 1) {
@@ -148,6 +264,10 @@ function registerSocketHandlers(io) {
           callback({ error: "Game not in lobby" });
         return;
       }
+      if (!socket.rooms.has(gameId)) {
+        if (typeof callback === "function") callback({ error: "Not in this game" });
+        return;
+      }
       if (getPlayerNum(socket, game) !== 1) {
         if (typeof callback === "function")
           callback({ error: "Only player 1 can set draft order" });
@@ -163,40 +283,32 @@ function registerSocketHandlers(io) {
       broadcastGameState(io, gameId, updated);
     });
 
-    socket.on("start_draft", (callback) => {
-      const gameId = Array.from(socket.rooms).find(
-        (r) => r !== socket.id && r.length === 8
-      );
-      if (!gameId) {
-        if (typeof callback === "function") callback({ error: "Not in a game" });
-        return;
-      }
-      const game = getGame(gameId);
-      if (!game || getPlayerNum(socket, game) !== 1) {
-        if (typeof callback === "function")
-          callback({ error: "Only player 1 can start" });
+    socket.on("start_draft", (payload, callback) => {
+      const cb = typeof payload === "function" ? payload : callback;
+      const payloadGameId =
+        payload && typeof payload === "object" ? payload.gameId : null;
+      const ctx = resolveGameForAction(socket, payloadGameId, cb);
+      if (!ctx) return;
+      const { gameId, game, pn } = ctx;
+      if (pn !== 1) {
+        if (typeof cb === "function") cb({ error: "Only player 1 can start" });
         return;
       }
       const updated = startDraft(gameId);
       if (!updated) {
-        if (typeof callback === "function")
-          callback({ error: "Could not start draft" });
+        if (typeof cb === "function") cb({ error: "Could not start draft" });
         return;
       }
-      if (typeof callback === "function") callback({ game: updated });
+      if (typeof cb === "function") cb({ game: updated });
       broadcastGameState(io, gameId, updated);
     });
 
     socket.on("spin", (result, callback) => {
-      const gameId = Array.from(socket.rooms).find(
-        (r) => r !== socket.id && r.length === 8
-      );
-      if (!gameId) {
-        if (typeof callback === "function") callback({ error: "Not in a game" });
-        return;
-      }
-      const game = getGame(gameId);
-      const pn = getPlayerNum(socket, game);
+      const payloadGameId =
+        result && typeof result === "object" ? result.gameId : null;
+      const ctx = resolveGameForAction(socket, payloadGameId, callback);
+      if (!ctx) return;
+      const { gameId, game, pn } = ctx;
       if (!game || game.phase !== "drafting" || game.currentTurn !== pn) {
         if (typeof callback === "function")
           callback({ error: "Not your turn or invalid phase" });
@@ -232,16 +344,12 @@ function registerSocketHandlers(io) {
       broadcastGameState(io, gameId, updated);
     });
 
-    socket.on("respin", (_, callback) => {
-      const gameId = Array.from(socket.rooms).find(
-        (r) => r !== socket.id && r.length === 8
-      );
-      if (!gameId) {
-        if (typeof callback === "function") callback({ error: "Not in a game" });
-        return;
-      }
-      const game = getGame(gameId);
-      const pn = getPlayerNum(socket, game);
+    socket.on("respin", (payload, callback) => {
+      const payloadGameId =
+        payload && typeof payload === "object" ? payload.gameId : null;
+      const ctx = resolveGameForAction(socket, payloadGameId, callback);
+      if (!ctx) return;
+      const { gameId, game, pn } = ctx;
       if (!game || game.phase !== "drafting" || game.currentTurn !== pn) {
         if (typeof callback === "function")
           callback({ error: "Not your turn or invalid phase" });
@@ -263,17 +371,18 @@ function registerSocketHandlers(io) {
 
     socket.on(
       "pick",
-      ({ playerId, playerName, position, teamId, naturalPosition }, callback) => {
-        const gameId = Array.from(socket.rooms).find(
-          (r) => r !== socket.id && r.length === 8
-        );
-        if (!gameId) {
-          if (typeof callback === "function")
-            callback({ error: "Not in a game" });
-          return;
-        }
-        const game = getGame(gameId);
-        const pn = getPlayerNum(socket, game);
+      (payload, callback) => {
+        const {
+          playerId,
+          playerName,
+          position,
+          teamId,
+          naturalPosition,
+          gameId: payloadGameId,
+        } = payload || {};
+        const ctx = resolveGameForAction(socket, payloadGameId, callback);
+        if (!ctx) return;
+        const { gameId, game, pn } = ctx;
         if (!game || game.phase !== "drafting" || game.currentTurn !== pn) {
           if (typeof callback === "function")
             callback({ error: "Not your turn" });
@@ -302,6 +411,21 @@ function registerSocketHandlers(io) {
         broadcastGameState(io, gameId, updated);
       }
     );
+
+    socket.on("leave_game", ({ gameId }, callback) => {
+      const targetGameId =
+        typeof gameId === "string" && gameId.length === 8
+          ? gameId
+          : socket.data.gameId;
+      if (targetGameId && socket.rooms.has(targetGameId)) {
+        socket.leave(targetGameId);
+      }
+      if (socket.data.gameId === targetGameId) {
+        delete socket.data.gameId;
+        delete socket.data.playerNumber;
+      }
+      if (typeof callback === "function") callback({ ok: true });
+    });
 
     socket.on("simulation_started", ({ gameId }) => {
       io.to(gameId).emit("simulation_started");

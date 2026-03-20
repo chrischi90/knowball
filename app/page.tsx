@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSocket } from "@/lib/socket";
+import { persistMultiplayerSession } from "@/lib/multiplayer-session";
 import type { GameState } from "@/lib/game-types";
 
 export default function LobbyPage() {
@@ -17,13 +18,19 @@ export default function LobbyPage() {
     setError("");
     setCreating(true);
     const socket = getSocket();
-    socket.emit("create_game", (res: { gameId?: string; game?: GameState; error?: string }) => {
+    socket.emit("create_game", (res: { gameId?: string; game?: GameState; playerNumber?: number; reconnectToken?: string; error?: string }) => {
       setCreating(false);
       if (res.error) {
         setError(res.error);
         return;
       }
-      if (res.gameId) router.push(`/game/${res.gameId}`);
+      if (res.gameId) {
+        persistMultiplayerSession(res.gameId, {
+          playerNumber: res.playerNumber ?? 1,
+          reconnectToken: res.reconnectToken,
+        });
+        router.push(`/game/${res.gameId}`);
+      }
     });
   };
 
@@ -37,13 +44,19 @@ export default function LobbyPage() {
     }
     setJoining(true);
     const socket = getSocket();
-    socket.emit("join_game", { gameId: code }, (res: { game?: GameState; playerNumber?: number; error?: string }) => {
+    socket.emit("join_game", { gameId: code }, (res: { game?: GameState; playerNumber?: number; reconnectToken?: string; error?: string }) => {
       setJoining(false);
       if (res.error) {
         setError(res.error);
         return;
       }
-      if (res.game) router.push(`/game/${code}`);
+      if (res.game) {
+        persistMultiplayerSession(code, {
+          playerNumber: res.playerNumber,
+          reconnectToken: res.reconnectToken,
+        });
+        router.push(`/game/${code}`);
+      }
     });
   };
 

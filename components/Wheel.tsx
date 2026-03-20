@@ -51,7 +51,15 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, myNumber, curren
 
   // Sync state when other player spins - just update the display
   useEffect(() => {
-    if (!currentTeamId || teams.length === 0 || prevTeamIdRef.current === currentTeamId) return;
+    // Once a pick is made, wheelTeamId is cleared. Reset result UI so stale
+    // "landed on" text does not persist into the next turn.
+    if (!currentTeamId) {
+      prevTeamIdRef.current = null;
+      setLandedIndex(null);
+      setShowResult(false);
+      return;
+    }
+    if (teams.length === 0 || prevTeamIdRef.current === currentTeamId) return;
     prevTeamIdRef.current = currentTeamId;
     const idx = teams.findIndex((t) => t.id === currentTeamId);
     if (idx === -1) return;
