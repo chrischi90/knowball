@@ -6,6 +6,15 @@ import { POSITIONS } from "@/lib/game-types";
 
 type Body = { roster1: Roster; roster2: Roster; gameMode?: string };
 
+const LEAGUE_AVERAGE_STATS: Omit<PlayerStats, "player_id"> = {
+  gp: 82,
+  pts: 15,
+  reb: 5,
+  ast: 3.5,
+  stl: 1,
+  blk: 0.7,
+};
+
 function powerScore(pts: number, reb: number, ast: number, stl: number, blk: number): number {
   return pts + reb * 1.2 + ast * 1.5 + stl * 3 + blk * 3;
 }
@@ -18,7 +27,47 @@ function positionMismatchMultiplier(natural: string | null, assigned: string): n
   return diff === 0 ? 1.0 : diff === 1 ? 0.85 : 0.70;
 }
 
-function buildStatsMap(roster: Roster, stats: (PlayerStats | null)[]): Record<string, PlayerStats | null> {
+function averageStats(stats: PlayerStats[]): Omit<PlayerStats, "player_id"> {
+  if (stats.length === 0) return LEAGUE_AVERAGE_STATS;
+
+  const sum = stats.reduce(
+    (acc, s) => {
+      acc.gp += s.gp;
+      acc.pts += s.pts;
+      acc.reb += s.reb;
+      acc.ast += s.ast;
+      acc.stl += s.stl;
+      acc.blk += s.blk;
+      return acc;
+    },
+    { gp: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0 }
+  );
+
+  return {
+    gp: Math.round(sum.gp / stats.length),
+    pts: sum.pts / stats.length,
+    reb: sum.reb / stats.length,
+    ast: sum.ast / stats.length,
+    stl: sum.stl / stats.length,
+    blk: sum.blk / stats.length,
+  };
+}
+
+function resolveRosterStats(roster: Roster, rawStats: (PlayerStats | null)[]): PlayerStats[] {
+  const available = rawStats.filter((s): s is PlayerStats => s !== null);
+  const rosterAverage = averageStats(available);
+
+  return POSITIONS.map((p, i) => {
+    const existing = rawStats[i];
+    if (existing) return existing;
+    return {
+      player_id: roster[p].playerId ?? "",
+      ...rosterAverage,
+    };
+  });
+}
+
+function buildStatsMap(roster: Roster, stats: PlayerStats[]): Record<string, PlayerStats | null> {
   const map: Record<string, PlayerStats | null> = {};
   POSITIONS.forEach((p, i) => {
     const playerId = roster[p].playerId;
@@ -49,29 +98,39 @@ export async function POST(req: Request) {
 
     const fetchAll = async (roster: Roster) =>
       Promise.all(
-        POSITIONS.map((p) => {
+        POSITIONS.map(async (p) => {
           const slot = roster[p];
-          return slot.playerId
-            ? fetchPlayerStats(slot.playerId, slot.teamId, slot.playerName, gameMode).catch(() => null)
-            : Promise.resolve(null);
+          if (!slot.playerId) return null;
+
+          const teamScoped = await fetchPlayerStats(
+            slot.playerId,
+            slot.teamId,
+            slot.playerName,
+            gameMode
+          ).catch(() => null);
+          if (teamScoped) return teamScoped;
+
+          return fetchPlayerStats(slot.playerId, null, slot.playerName, gameMode).catch(() => null);
         })
       );
 
-    const [stats1, stats2] = await Promise.all([fetchAll(roster1), fetchAll(roster2)]);
+    const [rawStats1, rawStats2] = await Promise.all([fetchAll(roster1), fetchAll(roster2)]);
+    const stats1 = resolveRosterStats(roster1, rawStats1);
+    const stats2 = resolveRosterStats(roster2, rawStats2);
 
     let team1Score = 0;
     let team2Score = 0;
     stats1.forEach((s, i) => {
-      if (s) {
-        const slot = roster1[POSITIONS[i]];
-        team1Score += powerScore(s.pts, s.reb, s.ast, s.stl, s.blk) * positionMismatchMultiplier(slot.naturalPosition, POSITIONS[i]);
-      }
+      const slot = roster1[POSITIONS[i]];
+      team1Score +=
+        powerScore(s.pts, s.reb, s.ast, s.stl, s.blk) *
+        positionMismatchMultiplier(slot.naturalPosition, POSITIONS[i]);
     });
     stats2.forEach((s, i) => {
-      if (s) {
-        const slot = roster2[POSITIONS[i]];
-        team2Score += powerScore(s.pts, s.reb, s.ast, s.stl, s.blk) * positionMismatchMultiplier(slot.naturalPosition, POSITIONS[i]);
-      }
+      const slot = roster2[POSITIONS[i]];
+      team2Score +=
+        powerScore(s.pts, s.reb, s.ast, s.stl, s.blk) *
+        positionMismatchMultiplier(slot.naturalPosition, POSITIONS[i]);
     });
 
     const winner: 1 | 2 | null =

@@ -1,18 +1,20 @@
 """
-Seed script to populate Neon Postgres with NBA teams and historical rosters.
+Seed script to populate Neon Postgres with NBA teams, historical rosters,
+and per-season player stats.
 
 Data sources:
-  - Teams:      nba_api static data (local, no HTTP)
-  - Rosters:    basketball_reference_web_scraper players_season_totals (one HTTP call per season)
-              + BBRef team roster pages (supplemental, captures injured/inactive players)
-  - Player IDs: nba_api static player data (local, no HTTP) cross-referenced by name
+    - Teams: nba_api static data (local, no HTTP)
+    - Rosters: basketball_reference_web_scraper players_season_totals
+                     + BBRef team roster pages (supplemental, captures injured/inactive players)
+    - Stats: season totals + advanced season totals from basketball-reference
+    - Player IDs: nba_api static player data (local, no HTTP) cross-referenced by name
 
 Run locally (NOT on Render):
-    pip install -r seed_requirements.txt
-    DATABASE_URL="postgresql://..." python seed_db.py
+        pip install -r seed_requirements.txt
+        DATABASE_URL="postgresql://..." python seed_db.py
 
-Idempotent — safe to re-run. Re-run after trades or at the start of a new season.
-To add a new season, just re-run — it will skip already-inserted rows.
+Idempotent - safe to re-run. Re-run after trades or at the start of a new season.
+To add a new season, just re-run - it will skip already-inserted rows.
 """
 import os
 import re
@@ -35,6 +37,9 @@ SEASON_STOP_END_YEAR  = 2026   # last season to fetch  (2025-26)
 
 # Seconds to wait between basketball-reference requests (be respectful)
 REQUEST_DELAY = 3.0
+
+# Small pause between totals and advanced totals calls for the same season.
+ADVANCED_REQUEST_DELAY = 1.0
 
 # Generational suffixes that nba_api may include but bref often omits (or vice versa)
 _SUFFIX_RE = re.compile(r'\s+(jr\.?|sr\.?|ii|iii|iv|v)$', re.IGNORECASE)
@@ -147,6 +152,36 @@ def normalize_position(positions: list) -> str:
     return POSITION_TO_SHORT.get(positions[0], "SF")
 
 
+def _safe_per_game(total: float, gp: int) -> float:
+    if gp <= 0:
+        return 0.0
+    return float(total) / float(gp)
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _optional_float(value):
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    if not denominator:
+        return 0.0
+    return float(numerator) / float(denominator)
+
+
 def resolve_team_id(team_enum: Team, full_name_to_id: dict) -> "str | None":
     """Map a bref Team enum to our DB team_id, handling historical franchise names."""
     bref_name = team_enum.value.title()
@@ -155,19 +190,54 @@ def resolve_team_id(team_enum: Team, full_name_to_id: dict) -> "str | None":
 
 
 def seed_one_season(conn, end_year: int, full_name_to_id: dict, exact_lookup: dict, norm_lookup: dict):
-    """Fetch and insert one season's roster data. Returns (inserted, unmatched) counts."""
+    """Fetch and insert one season's roster and stat data."""
     label = season_label(end_year)
     try:
         season_data = client.players_season_totals(season_end_year=end_year)
     except Exception as e:
         print(f"  [{label}] ERROR fetching: {e}")
-        return 0, 0
+        return 0, 0, 0
+
+    advanced_data = []
+    try:
+        time.sleep(ADVANCED_REQUEST_DELAY)
+        advanced_data = client.players_advanced_season_totals(
+            season_end_year=end_year,
+            include_combined_values=False,
+        )
+    except Exception as e:
+        print(f"  [{label}] WARNING advanced totals unavailable: {e}")
+
+    advanced_by_player_team: dict = {}
+    for row in advanced_data:
+        team_enum = row.get("team")
+        if team_enum is None:
+            continue
+        team_id = resolve_team_id(team_enum, full_name_to_id)
+        if team_id is None:
+            continue
+
+        player_name: str = row.get("name", "").strip()
+        if not player_name:
+            continue
+
+        nba_id = lookup_player_id(player_name, exact_lookup, norm_lookup)
+        if nba_id is None:
+            continue
+
+        key = (nba_id, team_id)
+        existing = advanced_by_player_team.get(key)
+        gp = int(row.get("games_played") or 0)
+        existing_gp = int(existing.get("games_played") or 0) if existing else -1
+        if gp >= existing_gp:
+            advanced_by_player_team[key] = row
 
     # Deduplicate within a single season: bref emits a TOT row + per-team rows for
     # traded players. Track (name, team_id, season) so a player can appear for the
     # same team across different seasons but not twice in the same season.
     seen: set = set()
     rows_to_insert = []
+    stats_rows_to_upsert = []
     unmatched_count = 0
 
     for row in season_data:
@@ -197,37 +267,213 @@ def seed_one_season(conn, end_year: int, full_name_to_id: dict, exact_lookup: di
         pos = normalize_position(positions)
         rows_to_insert.append((nba_id, team_id, label, player_name, pos, ""))
 
-    if rows_to_insert:
+        gp = int(row.get("games_played") or 0)
+        if gp > 0:
+            gs = int(row.get("games_started") or 0)
+            minutes_total = _safe_float(row.get("minutes_played"))
+            fgm_total = _safe_float(row.get("made_field_goals"))
+            fga_total = _safe_float(row.get("attempted_field_goals"))
+            fg3m_total = _safe_float(row.get("made_three_point_field_goals"))
+            fg3a_total = _safe_float(row.get("attempted_three_point_field_goals"))
+            ftm_total = _safe_float(row.get("made_free_throws"))
+            fta_total = _safe_float(row.get("attempted_free_throws"))
+            orb_total = _safe_float(row.get("offensive_rebounds"))
+            drb_total = _safe_float(row.get("defensive_rebounds"))
+            reb_total = orb_total + drb_total
+            ast_total = _safe_float(row.get("assists"))
+            stl_total = _safe_float(row.get("steals"))
+            blk_total = _safe_float(row.get("blocks"))
+            tov_total = _safe_float(row.get("turnovers"))
+            pf_total = _safe_float(row.get("personal_fouls"))
+            pts_total = _safe_float(row.get("points"))
+
+            advanced = advanced_by_player_team.get((nba_id, team_id), {})
+
+            per = _optional_float(advanced.get("player_efficiency_rating"))
+            ts_pct = _optional_float(advanced.get("true_shooting_percentage"))
+            three_par = _optional_float(advanced.get("three_point_attempt_rate"))
+            ftr = _optional_float(advanced.get("free_throw_attempt_rate"))
+            orb_pct = _optional_float(advanced.get("offensive_rebound_percentage"))
+            drb_pct = _optional_float(advanced.get("defensive_rebound_percentage"))
+            trb_pct = _optional_float(advanced.get("total_rebound_percentage"))
+            ast_pct = _optional_float(advanced.get("assist_percentage"))
+            stl_pct = _optional_float(advanced.get("steal_percentage"))
+            blk_pct = _optional_float(advanced.get("block_percentage"))
+            tov_pct = _optional_float(advanced.get("turnover_percentage"))
+            usg_pct = _optional_float(advanced.get("usage_percentage"))
+            ows = _optional_float(advanced.get("offensive_win_shares"))
+            dws = _optional_float(advanced.get("defensive_win_shares"))
+            ws = _optional_float(advanced.get("win_shares"))
+            ws48 = _optional_float(advanced.get("win_shares_per_48_minutes"))
+            obpm = _optional_float(advanced.get("offensive_box_plus_minus"))
+            dbpm = _optional_float(advanced.get("defensive_box_plus_minus"))
+            bpm = _optional_float(advanced.get("box_plus_minus"))
+            vorp = _optional_float(advanced.get("value_over_replacement_player"))
+
+            if ts_pct is None:
+                ts_pct = _safe_ratio(pts_total, 2 * (fga_total + 0.44 * fta_total))
+            if three_par is None:
+                three_par = _safe_ratio(fg3a_total, fga_total)
+            if ftr is None:
+                ftr = _safe_ratio(fta_total, fga_total)
+
+            stats_rows_to_upsert.append((
+                nba_id,
+                team_id,
+                label,
+                gp,
+                gs,
+                _safe_per_game(minutes_total, gp),
+                _safe_per_game(pts_total, gp),
+                _safe_per_game(reb_total, gp),
+                _safe_per_game(ast_total, gp),
+                _safe_per_game(stl_total, gp),
+                _safe_per_game(blk_total, gp),
+                _safe_per_game(fgm_total, gp),
+                _safe_per_game(fga_total, gp),
+                _safe_per_game(fg3m_total, gp),
+                _safe_per_game(fg3a_total, gp),
+                _safe_per_game(ftm_total, gp),
+                _safe_per_game(fta_total, gp),
+                _safe_per_game(tov_total, gp),
+                _safe_per_game(pf_total, gp),
+                per,
+                ts_pct,
+                three_par,
+                ftr,
+                orb_pct,
+                drb_pct,
+                trb_pct,
+                ast_pct,
+                stl_pct,
+                blk_pct,
+                tov_pct,
+                usg_pct,
+                ows,
+                dws,
+                ws,
+                ws48,
+                obpm,
+                dbpm,
+                bpm,
+                vorp,
+                "basketball_reference",
+            ))
+
+    if rows_to_insert or stats_rows_to_upsert:
         with conn.cursor() as cur:
-            cur.executemany(
-                """
-                INSERT INTO roster_players (player_id, team_id, season, player_name, position, jersey)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (player_id, team_id, season) DO NOTHING
-                """,
-                rows_to_insert,
-            )
+            if rows_to_insert:
+                cur.executemany(
+                    """
+                    INSERT INTO roster_players (player_id, team_id, season, player_name, position, jersey)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (player_id, team_id, season) DO NOTHING
+                    """,
+                    rows_to_insert,
+                )
+
+            if stats_rows_to_upsert:
+                cur.executemany(
+                    """
+                    INSERT INTO player_season_stats
+                        (
+                            player_id, team_id, season, gp, gs, minutes,
+                            pts, reb, ast, stl, blk,
+                            fgm, fga, fg3m, fg3a, ftm, fta, tov, pf,
+                            per, ts_pct, three_par, ftr,
+                            orb_pct, drb_pct, trb_pct, ast_pct, stl_pct, blk_pct, tov_pct, usg_pct,
+                            ows, dws, ws, ws48, obpm, dbpm, bpm, vorp,
+                            source
+                        )
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s
+                    )
+                    ON CONFLICT (player_id, team_id, season) DO UPDATE
+                    SET
+                        gp = EXCLUDED.gp,
+                        gs = EXCLUDED.gs,
+                        minutes = EXCLUDED.minutes,
+                        pts = EXCLUDED.pts,
+                        reb = EXCLUDED.reb,
+                        ast = EXCLUDED.ast,
+                        stl = EXCLUDED.stl,
+                        blk = EXCLUDED.blk,
+                        fgm = EXCLUDED.fgm,
+                        fga = EXCLUDED.fga,
+                        fg3m = EXCLUDED.fg3m,
+                        fg3a = EXCLUDED.fg3a,
+                        ftm = EXCLUDED.ftm,
+                        fta = EXCLUDED.fta,
+                        tov = EXCLUDED.tov,
+                        pf = EXCLUDED.pf,
+                        per = EXCLUDED.per,
+                        ts_pct = EXCLUDED.ts_pct,
+                        three_par = EXCLUDED.three_par,
+                        ftr = EXCLUDED.ftr,
+                        orb_pct = EXCLUDED.orb_pct,
+                        drb_pct = EXCLUDED.drb_pct,
+                        trb_pct = EXCLUDED.trb_pct,
+                        ast_pct = EXCLUDED.ast_pct,
+                        stl_pct = EXCLUDED.stl_pct,
+                        blk_pct = EXCLUDED.blk_pct,
+                        tov_pct = EXCLUDED.tov_pct,
+                        usg_pct = EXCLUDED.usg_pct,
+                        ows = EXCLUDED.ows,
+                        dws = EXCLUDED.dws,
+                        ws = EXCLUDED.ws,
+                        ws48 = EXCLUDED.ws48,
+                        obpm = EXCLUDED.obpm,
+                        dbpm = EXCLUDED.dbpm,
+                        bpm = EXCLUDED.bpm,
+                        vorp = EXCLUDED.vorp,
+                        source = EXCLUDED.source,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    stats_rows_to_upsert,
+                )
         conn.commit()
 
-    return len(rows_to_insert), unmatched_count
+    return len(rows_to_insert), len(stats_rows_to_upsert), unmatched_count
 
 
 def seed_all_seasons(conn, full_name_to_id: dict, exact_lookup: dict, norm_lookup: dict):
-    total_inserted = 0
+    total_roster_inserted = 0
+    total_stats_upserted = 0
     total_unmatched = 0
     years = list(range(SEASON_START_END_YEAR, SEASON_STOP_END_YEAR + 1))
     print(f"Seeding {len(years)} seasons ({season_label(years[0])} → {season_label(years[-1])})...")
 
     for i, end_year in enumerate(years):
         label = season_label(end_year)
-        inserted, unmatched = seed_one_season(conn, end_year, full_name_to_id, exact_lookup, norm_lookup)
-        total_inserted += inserted
+        roster_inserted, stats_upserted, unmatched = seed_one_season(
+            conn,
+            end_year,
+            full_name_to_id,
+            exact_lookup,
+            norm_lookup,
+        )
+        total_roster_inserted += roster_inserted
+        total_stats_upserted += stats_upserted
         total_unmatched += unmatched
-        print(f"  [{i+1}/{len(years)}] {label}: {inserted} inserted, {unmatched} unmatched")
+        print(
+            f"  [{i+1}/{len(years)}] {label}: "
+            f"{roster_inserted} rosters, {stats_upserted} stats rows, {unmatched} unmatched"
+        )
         if i < len(years) - 1:
             time.sleep(REQUEST_DELAY)
 
-    print(f"\nAll seasons done. {total_inserted} total rows inserted, {total_unmatched} unmatched.")
+    print(
+        "\nAll seasons done. "
+        f"{total_roster_inserted} total rosters, "
+        f"{total_stats_upserted} total stats rows, "
+        f"{total_unmatched} unmatched."
+    )
 
 
 # BBRef uses different abbreviations for a handful of teams
@@ -417,6 +663,7 @@ def main():
     print("\nDone! Verify with:")
     print("  SELECT COUNT(*) FROM teams;          -- expect 30")
     print("  SELECT COUNT(*) FROM roster_players; -- expect ~8,000-12,000")
+    print("  SELECT COUNT(*) FROM player_season_stats; -- expect ~8,000-12,000")
     print("  SELECT COUNT(DISTINCT player_id) FROM roster_players; -- unique players")
 
 

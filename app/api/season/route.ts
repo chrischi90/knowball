@@ -1,9 +1,19 @@
 import { NextResponse } from "next/server";
 import { fetchPlayerStats } from "@/lib/nba-api";
 import type { Roster } from "@/lib/game-types";
+import type { PlayerStats } from "@/lib/nba-api";
 import { POSITIONS } from "@/lib/game-types";
 
 type Body = { roster: Roster; gameMode?: string };
+
+const LEAGUE_AVERAGE_STATS: Omit<PlayerStats, "player_id"> = {
+  gp: 82,
+  pts: 15,
+  reb: 5,
+  ast: 3.5,
+  stl: 1,
+  blk: 0.7,
+};
 
 // Same formula as /api/simulate
 function powerScore(pts: number, reb: number, ast: number, stl: number, blk: number): number {
@@ -16,6 +26,46 @@ function positionMismatchMultiplier(natural: string | null, assigned: string): n
   if (!natural) return 1.0;
   const diff = Math.abs((POSITION_GROUP[natural] ?? 1) - (POSITION_GROUP[assigned] ?? 1));
   return diff === 0 ? 1.0 : diff === 1 ? 0.85 : 0.70;
+}
+
+function averageStats(stats: PlayerStats[]): Omit<PlayerStats, "player_id"> {
+  if (stats.length === 0) return LEAGUE_AVERAGE_STATS;
+
+  const sum = stats.reduce(
+    (acc, s) => {
+      acc.gp += s.gp;
+      acc.pts += s.pts;
+      acc.reb += s.reb;
+      acc.ast += s.ast;
+      acc.stl += s.stl;
+      acc.blk += s.blk;
+      return acc;
+    },
+    { gp: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0 }
+  );
+
+  return {
+    gp: Math.round(sum.gp / stats.length),
+    pts: sum.pts / stats.length,
+    reb: sum.reb / stats.length,
+    ast: sum.ast / stats.length,
+    stl: sum.stl / stats.length,
+    blk: sum.blk / stats.length,
+  };
+}
+
+function resolveRosterStats(roster: Roster, rawStats: (PlayerStats | null)[]): PlayerStats[] {
+  const available = rawStats.filter((s): s is PlayerStats => s !== null);
+  const rosterAverage = averageStats(available);
+
+  return POSITIONS.map((p, i) => {
+    const existing = rawStats[i];
+    if (existing) return existing;
+    return {
+      player_id: roster[p].playerId ?? "",
+      ...rosterAverage,
+    };
+  });
 }
 
 // Simulate a best-of-7 series. Returns { wins, losses } for the user's team.
@@ -49,14 +99,24 @@ export async function POST(req: Request) {
     }
 
     // Fetch stats for all 5 players in parallel, scoped to their selected team
-    const statsResults = await Promise.all(
-      POSITIONS.map((p) => {
+    const rawStatsResults = await Promise.all(
+      POSITIONS.map(async (p) => {
         const slot = roster[p];
-        return slot.playerId
-          ? fetchPlayerStats(slot.playerId, slot.teamId, slot.playerName, gameMode).catch(() => null)
-          : Promise.resolve(null);
+        if (!slot.playerId) return null;
+
+        const teamScoped = await fetchPlayerStats(
+          slot.playerId,
+          slot.teamId,
+          slot.playerName,
+          gameMode
+        ).catch(() => null);
+        if (teamScoped) return teamScoped;
+
+        return fetchPlayerStats(slot.playerId, null, slot.playerName, gameMode).catch(() => null);
       })
     );
+
+    const statsResults = resolveRosterStats(roster, rawStatsResults);
 
     // Compute per-player power scores for MVP and team stats
     const playerScores = statsResults.map((s, i) => {
@@ -65,12 +125,12 @@ export async function POST(req: Request) {
       return {
         playerName: slot.playerName ?? "",
         position: POSITIONS[i],
-        pts: s?.pts ?? 0,
-        reb: s?.reb ?? 0,
-        ast: s?.ast ?? 0,
-        stl: s?.stl ?? 0,
-        blk: s?.blk ?? 0,
-        score: s ? powerScore(s.pts, s.reb, s.ast, s.stl, s.blk) * multiplier : 0,
+        pts: s.pts,
+        reb: s.reb,
+        ast: s.ast,
+        stl: s.stl,
+        blk: s.blk,
+        score: powerScore(s.pts, s.reb, s.ast, s.stl, s.blk) * multiplier,
       };
     });
 

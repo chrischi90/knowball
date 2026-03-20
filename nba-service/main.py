@@ -1,16 +1,14 @@
 """
-NBA data service. Teams and rosters served from Neon Postgres DB.
-Player stats: Basketball Reference is primary (more permissive), nba_api is fallback.
+NBA data service. Teams, rosters, and seeded player stats served from Neon Postgres DB.
+Player stats path is DB-first with Basketball Reference and nba_api as fallback.
 Stats are mode-aware: active_only=current season, all_time=career stint with selected team.
 """
-import json
 import logging
 import os
 import re
 import threading
 import time
 import unicodedata
-from pathlib import Path
 from typing import Optional
 
 logging.basicConfig(level=logging.INFO)
@@ -169,6 +167,12 @@ def _strip_team_suffix(name: str) -> str:
     return re.sub(r"\s+\([A-Z]+\)$", "", (name or "")).strip()
 
 
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    if not denominator:
+        return 0.0
+    return float(numerator) / float(denominator)
+
+
 # ---------------------------------------------------------------------------
 # Basketball Reference — player_season_totals (league-wide per-season scrape)
 # Works for both active_only and all_time: static HTML, no JS rendering issues.
@@ -285,6 +289,175 @@ def _get_player_team_seasons(player_id: str, team_id: str) -> list[int]:
         return []
 
 
+def _query_seeded_stats_rows(
+    player_id: str,
+    team_id: Optional[str] = None,
+    season_filter: Optional[str] = None,
+) -> list[tuple]:
+    """Read raw player season stat rows from Postgres."""
+    try:
+        conn = get_db()
+        clauses = ["player_id = %s"]
+        params: list = [player_id]
+
+        if team_id:
+            clauses.append("team_id = %s")
+            params.append(team_id)
+        if season_filter:
+            clauses.append("season = %s")
+            params.append(season_filter)
+
+        query = (
+            "SELECT "
+            "gp, pts, reb, ast, stl, blk, "
+            "per, ts_pct, three_par, ftr, "
+            "orb_pct, drb_pct, trb_pct, ast_pct, stl_pct, blk_pct, tov_pct, usg_pct, "
+            "ows, dws, ws, ws48, obpm, dbpm, bpm, vorp, "
+            "minutes, fgm, fga, fg3m, fg3a, ftm, fta, tov, pf "
+            "FROM player_season_stats "
+            f"WHERE {' AND '.join(clauses)}"
+        )
+        with conn.cursor() as cur:
+            cur.execute(query, tuple(params))
+            return cur.fetchall()
+    except Exception as exc:
+        logger.warning(
+            "seeded stats query failed for player=%s team=%s season=%s: %s",
+            player_id,
+            team_id,
+            season_filter,
+            exc,
+        )
+        return []
+
+
+def _aggregate_seeded_stats(rows: list[tuple], min_gp: int) -> Optional[dict]:
+    """Build GP-weighted stats from season rows."""
+    qualifying: list[tuple] = []
+    for row in rows:
+        gp = int(row[0] or 0)
+        if gp < min_gp:
+            continue
+        qualifying.append(row)
+
+    if not qualifying:
+        return None
+
+    def weighted_optional(index: int) -> Optional[float]:
+        weighted_sum = 0.0
+        weighted_gp = 0
+        for row in qualifying:
+            value = row[index]
+            gp = int(row[0] or 0)
+            if value is None:
+                continue
+            weighted_sum += float(value) * gp
+            weighted_gp += gp
+        if weighted_gp == 0:
+            return None
+        return weighted_sum / weighted_gp
+
+    total_gp = sum(int(r[0] or 0) for r in qualifying)
+    total_pts = sum(float(r[1] or 0) * int(r[0] or 0) for r in qualifying)
+    total_reb = sum(float(r[2] or 0) * int(r[0] or 0) for r in qualifying)
+    total_ast = sum(float(r[3] or 0) * int(r[0] or 0) for r in qualifying)
+    total_stl = sum(float(r[4] or 0) * int(r[0] or 0) for r in qualifying)
+    total_blk = sum(float(r[5] or 0) * int(r[0] or 0) for r in qualifying)
+    total_minutes = sum(float(r[26] or 0) * int(r[0] or 0) for r in qualifying)
+    total_fgm = sum(float(r[27] or 0) * int(r[0] or 0) for r in qualifying)
+    total_fga = sum(float(r[28] or 0) * int(r[0] or 0) for r in qualifying)
+    total_fg3m = sum(float(r[29] or 0) * int(r[0] or 0) for r in qualifying)
+    total_fg3a = sum(float(r[30] or 0) * int(r[0] or 0) for r in qualifying)
+    total_ftm = sum(float(r[31] or 0) * int(r[0] or 0) for r in qualifying)
+    total_fta = sum(float(r[32] or 0) * int(r[0] or 0) for r in qualifying)
+    total_tov = sum(float(r[33] or 0) * int(r[0] or 0) for r in qualifying)
+    total_pf = sum(float(r[34] or 0) * int(r[0] or 0) for r in qualifying)
+
+    pts_pg = total_pts / total_gp
+    reb_pg = total_reb / total_gp
+    ast_pg = total_ast / total_gp
+    stl_pg = total_stl / total_gp
+    blk_pg = total_blk / total_gp
+
+    ts_pct = weighted_optional(7)
+    if ts_pct is None:
+        ts_pct = _safe_ratio(total_pts, 2 * (total_fga + 0.44 * total_fta))
+
+    return {
+        "player_id": "",
+        "gp": total_gp,
+        "pts": pts_pg,
+        "reb": reb_pg,
+        "ast": ast_pg,
+        "stl": stl_pg,
+        "blk": blk_pg,
+        "stocks": stl_pg + blk_pg,
+        "mpg": total_minutes / total_gp,
+        "fgm": total_fgm / total_gp,
+        "fga": total_fga / total_gp,
+        "fg3m": total_fg3m / total_gp,
+        "fg3a": total_fg3a / total_gp,
+        "ftm": total_ftm / total_gp,
+        "fta": total_fta / total_gp,
+        "tov": total_tov / total_gp,
+        "pf": total_pf / total_gp,
+        "fg_pct": _safe_ratio(total_fgm, total_fga),
+        "fg3_pct": _safe_ratio(total_fg3m, total_fg3a),
+        "ft_pct": _safe_ratio(total_ftm, total_fta),
+        "per": weighted_optional(6),
+        "ts_pct": ts_pct,
+        "three_par": _safe_ratio(total_fg3a, total_fga),
+        "ftr": _safe_ratio(total_fta, total_fga),
+        "orb_pct": weighted_optional(10),
+        "drb_pct": weighted_optional(11),
+        "trb_pct": weighted_optional(12),
+        "ast_pct": weighted_optional(13),
+        "stl_pct": weighted_optional(14),
+        "blk_pct": weighted_optional(15),
+        "tov_pct": weighted_optional(16),
+        "usg_pct": weighted_optional(17),
+        "ows": weighted_optional(18),
+        "dws": weighted_optional(19),
+        "ws": weighted_optional(20),
+        "ws48": weighted_optional(21),
+        "obpm": weighted_optional(22),
+        "dbpm": weighted_optional(23),
+        "bpm": weighted_optional(24),
+        "vorp": weighted_optional(25),
+    }
+
+
+def _fetch_seeded_stats(
+    player_id: str,
+    team_id: Optional[str] = None,
+    game_mode: str = "all_time",
+) -> Optional[dict]:
+    """DB-first stats lookup from seeded player_season_stats."""
+    min_gp = 5 if game_mode == "active_only" else 20
+    season_filter = CURRENT_SEASON if game_mode == "active_only" else None
+
+    rows = _query_seeded_stats_rows(player_id, team_id, season_filter)
+    if not rows:
+        logger.info(
+            "seeded stats miss: no rows for player=%s team=%s mode=%s",
+            player_id,
+            team_id,
+            game_mode,
+        )
+        return None
+
+    aggregated = _aggregate_seeded_stats(rows, min_gp)
+    if aggregated is None:
+        logger.info(
+            "seeded stats miss: rows below gp threshold for player=%s team=%s mode=%s min_gp=%d",
+            player_id,
+            team_id,
+            game_mode,
+            min_gp,
+        )
+    return aggregated
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -315,15 +488,54 @@ def _fetch_nba_api_stats(
                 if total_gp == 0:
                     logger.info("nba_api: player_id=%s has 0 qualifying GP after filters", player_id)
                     return None
+
+                def weighted_pg(col: str) -> float:
+                    if col not in df.columns:
+                        return 0.0
+                    return float((df[col].fillna(0) * df["GP"]).sum() / total_gp)
+
+                pts_pg = weighted_pg("PTS")
+                reb_pg = weighted_pg("REB")
+                ast_pg = weighted_pg("AST")
+                stl_pg = weighted_pg("STL")
+                blk_pg = weighted_pg("BLK")
+                fgm_pg = weighted_pg("FGM")
+                fga_pg = weighted_pg("FGA")
+                fg3m_pg = weighted_pg("FG3M")
+                fg3a_pg = weighted_pg("FG3A")
+                ftm_pg = weighted_pg("FTM")
+                fta_pg = weighted_pg("FTA")
+                tov_pg = weighted_pg("TOV")
+                pf_pg = weighted_pg("PF")
+
+                total_pts = pts_pg * total_gp
+                total_fga = fga_pg * total_gp
+                total_fta = fta_pg * total_gp
                 logger.info("nba_api: player_id=%s → total_gp=%d", player_id, total_gp)
                 return {
                     "player_id": player_id,
                     "gp": int(total_gp),
-                    "pts": float((df["PTS"] * df["GP"]).sum() / total_gp),
-                    "reb": float((df["REB"] * df["GP"]).sum() / total_gp),
-                    "ast": float((df["AST"] * df["GP"]).sum() / total_gp),
-                    "stl": float((df["STL"] * df["GP"]).sum() / total_gp),
-                    "blk": float((df["BLK"] * df["GP"]).sum() / total_gp),
+                    "pts": pts_pg,
+                    "reb": reb_pg,
+                    "ast": ast_pg,
+                    "stl": stl_pg,
+                    "blk": blk_pg,
+                    "stocks": stl_pg + blk_pg,
+                    "mpg": weighted_pg("MIN"),
+                    "fgm": fgm_pg,
+                    "fga": fga_pg,
+                    "fg3m": fg3m_pg,
+                    "fg3a": fg3a_pg,
+                    "ftm": ftm_pg,
+                    "fta": fta_pg,
+                    "tov": tov_pg,
+                    "pf": pf_pg,
+                    "fg_pct": _safe_ratio(fgm_pg, fga_pg),
+                    "fg3_pct": _safe_ratio(fg3m_pg, fg3a_pg),
+                    "ft_pct": _safe_ratio(ftm_pg, fta_pg),
+                    "ts_pct": _safe_ratio(total_pts, 2 * (total_fga + 0.44 * total_fta)),
+                    "three_par": _safe_ratio(fg3a_pg, fga_pg),
+                    "ftr": _safe_ratio(fta_pg, fga_pg),
                 }
             logger.info("nba_api: player_id=%s no matching dataframe found", player_id)
             return None
@@ -334,30 +546,8 @@ def _fetch_nba_api_stats(
     return None
 
 
-# ---------------------------------------------------------------------------
-# Persistent disk cache
-# ---------------------------------------------------------------------------
-
-_STATS_CACHE_FILE = Path(__file__).parent / "stats_cache.json"
-
-
-def _load_stats_cache() -> dict:
-    try:
-        if _STATS_CACHE_FILE.exists():
-            return json.loads(_STATS_CACHE_FILE.read_text())
-    except Exception:
-        pass
-    return {}
-
-
-def _save_stats_cache(cache: dict) -> None:
-    try:
-        _STATS_CACHE_FILE.write_text(json.dumps(cache))
-    except Exception:
-        pass
-
-
-_stats_cache: dict = _load_stats_cache()
+# In-memory cache only. Seeded DB is the persistent source of truth.
+_stats_cache: dict = {}
 
 
 def _get_player_stats(
@@ -367,35 +557,35 @@ def _get_player_stats(
     game_mode: str = "all_time",
 ) -> Optional[dict]:
     """
-    Fetch per-game stats with BR as primary and nba_api as fallback.
+    Fetch per-game stats with DB as primary and live fetch fallback.
 
-    active_only: 2025-26 season stats via BR player_season_totals → nba_api fallback.
-    all_time:    career stats scoped to team via BR player_season_totals (DB seasons) → nba_api fallback.
+    active_only: seeded 2025-26 rows from DB → BR season scrape → nba_api fallback.
+    all_time:    seeded career rows scoped to team from DB → BR scrape via DB seasons → nba_api fallback.
     """
     key = f"{player_id}:{team_id}:{game_mode}"
     if key in _stats_cache:
         logger.info("stats cache hit: %s", key)
         return _stats_cache[key]
 
-    result: Optional[dict] = None
+    result: Optional[dict] = _fetch_seeded_stats(player_id, team_id, game_mode)
 
-    if game_mode == "active_only":
-        seasons = _get_player_team_seasons(player_id, team_id) if player_id and team_id else []
-        if player_name and seasons:
-            result = _fetch_br_seasons(player_name, seasons, min_gp=5)
-        if result is None:
-            result = _fetch_nba_api_stats(player_id, team_id)
-    else:  # all_time
-        seasons = _get_player_team_seasons(player_id, team_id) if player_id and team_id else []
-        if player_name and seasons:
-            result = _fetch_br_seasons(player_name, seasons, min_gp=20)
-        if result is None:
-            result = _fetch_nba_api_stats(player_id, team_id)
+    if result is None:
+        if game_mode == "active_only":
+            seasons = _get_player_team_seasons(player_id, team_id) if player_id and team_id else []
+            if player_name and seasons:
+                result = _fetch_br_seasons(player_name, seasons, min_gp=5)
+            if result is None:
+                result = _fetch_nba_api_stats(player_id, team_id, season_filter=CURRENT_SEASON)
+        else:  # all_time
+            seasons = _get_player_team_seasons(player_id, team_id) if player_id and team_id else []
+            if player_name and seasons:
+                result = _fetch_br_seasons(player_name, seasons, min_gp=20)
+            if result is None:
+                result = _fetch_nba_api_stats(player_id, team_id)
 
     if result is not None:
         result["player_id"] = player_id
         _stats_cache[key] = result
-        _save_stats_cache(_stats_cache)
 
     return result
 
@@ -409,9 +599,10 @@ def get_player_stats(
 ):
     """
     Get per-game stats for simulation.
+    DB seeded stats are primary.
     - game_mode=active_only: 2025-26 season only
     - game_mode=all_time: career stats scoped to team_id tenure
-    Pass player_name (display form OK, e.g. 'Stephen Curry (GSW)') to enable BR primary path.
+    Pass player_name (display form OK, e.g. 'Stephen Curry (GSW)') to enable BR fallback path.
     """
     result = _get_player_stats(player_id, team_id, player_name, game_mode)
     if result is None:
