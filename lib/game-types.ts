@@ -19,6 +19,17 @@ export type RosterSlot = {
 
 export type Roster = Record<Position, RosterSlot>;
 
+export type TeamFitDiagnostics = {
+  usageBalance: number;
+  usageOverloadPenalty: number;
+  spacingFit: number;
+  playmakingFit: number;
+  defenseFit: number;
+  turnoverRisk: number;
+  meshFactor: number;
+  chemistryImpact: number;
+};
+
 export function createEmptyRoster(): Roster {
   return {
     PG: { position: "PG", playerId: null, playerName: null, teamId: null, naturalPosition: null },
@@ -45,6 +56,12 @@ export type GameState = {
     winner: 1 | 2 | null;
     team1Score: number;
     team2Score: number;
+    team1WinProbability?: number;
+    team2WinProbability?: number;
+    team1Rating?: number;
+    team2Rating?: number;
+    team1Diagnostics?: TeamFitDiagnostics;
+    team2Diagnostics?: TeamFitDiagnostics;
     team1Stats?: Record<string, number>;
     team2Stats?: Record<string, number>;
     playerStats1?: Record<string, { pts: number; reb: number; ast: number; stl: number; blk: number } | null>;

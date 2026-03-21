@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { buildShareUrl, encode2PShareData } from "@/lib/share-utils";
+import type { TeamFitDiagnostics } from "@/lib/game-types";
 
 type PlayerStat = { pts: number; reb: number; ast: number; stl: number; blk: number } | null;
 
@@ -11,6 +12,10 @@ type SimulationResultProps = {
     winner: 1 | 2 | null;
     team1Score: number;
     team2Score: number;
+    team1WinProbability?: number;
+    team2WinProbability?: number;
+    team1Diagnostics?: TeamFitDiagnostics;
+    team2Diagnostics?: TeamFitDiagnostics;
     playerStats1?: Record<string, PlayerStat>;
     playerStats2?: Record<string, PlayerStat>;
   };
@@ -138,7 +143,17 @@ export function SimulationResult({
 }: SimulationResultProps) {
   const router = useRouter();
   const [showShareModal, setShowShareModal] = useState(false);
-  const { winner, team1Score, team2Score, playerStats1, playerStats2 } = result;
+  const {
+    winner,
+    team1Score,
+    team2Score,
+    team1WinProbability,
+    team2WinProbability,
+    team1Diagnostics,
+    team2Diagnostics,
+    playerStats1,
+    playerStats2,
+  } = result;
 
   function handleShare() {
     const text = buildTweetText2P(result);
@@ -215,6 +230,37 @@ export function SimulationResult({
           <p className="text-5xl font-bold text-white">{team2Score}</p>
         </div>
       </div>
+
+      {(typeof team1WinProbability === "number" && typeof team2WinProbability === "number") && (
+        <div className="mb-6 rounded-md bg-zinc-800/50 p-3 text-center">
+          <p className="text-xs uppercase tracking-wider text-zinc-400 mb-1">Win Odds</p>
+          <p className="text-sm text-zinc-200">
+            Player 1: {(team1WinProbability * 100).toFixed(1)}% | Player 2: {(team2WinProbability * 100).toFixed(1)}%
+          </p>
+        </div>
+      )}
+
+      {(team1Diagnostics || team2Diagnostics) && (
+        <div className="grid grid-cols-2 gap-3 mb-8">
+          {[{ label: "Player 1 Fit", data: team1Diagnostics }, { label: "Player 2 Fit", data: team2Diagnostics }].map(
+            ({ label, data }) => (
+              <div key={label} className="rounded-md bg-zinc-800/50 p-3">
+                <p className="text-xs uppercase tracking-wider text-zinc-400 mb-2">{label}</p>
+                {data ? (
+                  <div className="space-y-1 text-xs text-zinc-300">
+                    <p>Mesh: {data.meshFactor.toFixed(3)}</p>
+                    <p>Usage Balance: {data.usageBalance.toFixed(1)}</p>
+                    <p>Spacing: {data.spacingFit.toFixed(1)}</p>
+                    <p>Defense: {data.defenseFit.toFixed(1)}</p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-zinc-500">No fit diagnostics</p>
+                )}
+              </div>
+            )
+          )}
+        </div>
+      )}
 
       {/* Player Stats */}
       <div className="grid grid-cols-2 gap-6 mb-8">

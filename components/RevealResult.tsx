@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Roster } from "@/lib/game-types";
 import { POSITIONS } from "@/lib/game-types";
+import type { TeamFitDiagnostics } from "@/lib/game-types";
 import { buildShareUrl, encodeSoloShareData } from "@/lib/share-utils";
 
 type MvpData = {
@@ -29,6 +30,10 @@ type SeasonResultData = {
   wins: number;
   losses: number;
   teamPower: number;
+  regularSeasonWinProbability?: number;
+  fitDiagnostics?: TeamFitDiagnostics;
+  baseTalent?: number;
+  meshAdjustedTalent?: number;
   playerScores?: PlayerScore[];
   madePlayoffs: boolean;
   playoffResult: string | null;
@@ -36,6 +41,7 @@ type SeasonResultData = {
   milestones: string[];
   mvp: MvpData | null;
   badges: string[];
+  weaknessBadges?: string[];
 };
 
 type Props = {
@@ -67,6 +73,54 @@ function RevealBox({ visible, children }: { visible: boolean; children: React.Re
       {children}
     </div>
   );
+}
+
+function meshScoreColorClass(value: number): string {
+  if (value >= 1.06) return "text-emerald-500";
+  if (value >= 1.01) return "text-green-400";
+  if (value >= 0.97) return "text-white";
+  if (value >= 0.93) return "text-yellow-300";
+  return "text-red-400";
+}
+
+function usageBalanceColorClass(value: number): string {
+  if (value >= 75) return "text-emerald-500";
+  if (value >= 62) return "text-green-400";
+  if (value >= 48) return "text-white";
+  if (value >= 38) return "text-yellow-300";
+  return "text-red-400";
+}
+
+function spacingFitColorClass(value: number): string {
+  if (value >= 70) return "text-emerald-500";
+  if (value >= 58) return "text-green-400";
+  if (value >= 45) return "text-white";
+  if (value >= 35) return "text-yellow-300";
+  return "text-red-400";
+}
+
+function playmakingFitColorClass(value: number): string {
+  if (value >= 70) return "text-emerald-500";
+  if (value >= 58) return "text-green-400";
+  if (value >= 45) return "text-white";
+  if (value >= 35) return "text-yellow-300";
+  return "text-red-400";
+}
+
+function defenseFitColorClass(value: number): string {
+  if (value >= 70) return "text-emerald-500";
+  if (value >= 58) return "text-green-400";
+  if (value >= 45) return "text-white";
+  if (value >= 35) return "text-yellow-300";
+  return "text-red-400";
+}
+
+function usagePenaltyColorClass(value: number): string {
+  if (value <= 5) return "text-emerald-500";
+  if (value <= 8) return "text-green-400";
+  if (value <= 12) return "text-white";
+  if (value <= 17) return "text-yellow-300";
+  return "text-red-400";
 }
 
 function buildTweetText(result: SeasonResultData, roster: Roster): string {
@@ -181,7 +235,20 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
   const [revealStep, setRevealStep] = useState(0);
   const [showShareModal, setShowShareModal] = useState(false);
 
-  const { wins, losses, teamPower, playerScores, madePlayoffs, playoffResult, rounds, badges, mvp } = result;
+  const {
+    wins,
+    losses,
+    teamPower,
+    regularSeasonWinProbability,
+    fitDiagnostics,
+    playerScores,
+    madePlayoffs,
+    playoffResult,
+    rounds,
+    badges,
+    weaknessBadges,
+    mvp,
+  } = result;
 
   const isChampion = playoffResult === "Champion";
   const madeFinals = playoffResult === "NBA Finals";
@@ -265,14 +332,19 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
                 <span className="text-6xl font-bold text-red-400">{losses}</span>
               </div>
               <p className="text-xs text-zinc-600 mt-3">Team Power: {teamPower}</p>
+              {typeof regularSeasonWinProbability === "number" && (
+                <p className="text-xs text-zinc-600 mt-1">
+                  Per-game win probability: {(regularSeasonWinProbability * 100).toFixed(1)}%
+                </p>
+              )}
             </div>
           </RevealBox>
         </div>
 
         {/* Box 2: Badges */}
-        <div className="mb-4">
+        <div className="mb-4 relative z-30">
           <RevealBox visible={revealStep >= STEP_BADGES}>
-            <div className="rounded-lg bg-zinc-900 p-4">
+            <div className="relative z-30 rounded-lg bg-zinc-900 p-4">
               <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-3">
                 Team Badges
               </p>
@@ -289,6 +361,97 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
                 </div>
               ) : (
                 <p className="text-zinc-500 text-sm">No standout traits detected.</p>
+              )}
+
+              <div className="mt-4">
+                <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">
+                  Team Weaknesses
+                </p>
+                {weaknessBadges && weaknessBadges.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {weaknessBadges.map((badge) => (
+                      <span
+                        key={badge}
+                        className="px-3 py-1.5 rounded-full bg-red-600/15 border border-red-500/40 text-red-300 text-sm font-medium"
+                      >
+                        {badge}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-zinc-500 text-sm">No major weaknesses detected.</p>
+                )}
+              </div>
+
+              {fitDiagnostics && (
+                <div className="mt-4 rounded-md bg-zinc-800/60 p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                      Lineup Mesh
+                    </p>
+                    <div className="relative group z-40">
+                      <button
+                        type="button"
+                        aria-label="Explain lineup mesh metrics"
+                        className="h-5 w-5 rounded-full border border-zinc-500/60 text-zinc-300 text-[11px] leading-none hover:border-zinc-300 hover:text-white focus:outline-none focus:ring-2 focus:ring-orange-500/70"
+                      >
+                        i
+                      </button>
+                      <div
+                        role="tooltip"
+                        className="pointer-events-none absolute right-0 z-[120] mt-2 hidden w-80 rounded-md border border-zinc-700 bg-zinc-900 p-3 text-[11px] text-zinc-200 shadow-xl group-hover:block group-focus-within:block"
+                      >
+                        <p className="mb-2 text-zinc-100 font-medium">How to read these values</p>
+                        <ul className="space-y-1.5 text-zinc-300">
+                          <li>Mesh: around 1.00 is neutral, above 1.00 means strong fit, below 1.00 means chemistry drag.</li>
+                          <li>Spacing Fit: 0-100, higher means better floor spacing and cleaner driving lanes.</li>
+                          <li>Defense Fit: 0-100, higher means better defensive role coverage across the lineup.</li>
+                          <li>Usage Balance: 0-100, higher means touches are shared more cleanly.</li>
+                          <li>Playmaking Fit: 0-100, higher means enough creation and passing coverage.</li>
+                          <li>Usage Penalty: lower is better. 0-5 low overlap, 6-10 moderate, above 10 heavy usage conflict.</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs text-zinc-300 tabular-nums">
+                    <p>
+                      Mesh:{" "}
+                      <span className={`font-semibold ${meshScoreColorClass(fitDiagnostics.meshFactor)}`}>
+                        {fitDiagnostics.meshFactor.toFixed(3)}
+                      </span>
+                    </p>
+                    <p>
+                      Usage Balance:{" "}
+                      <span className={`font-semibold ${usageBalanceColorClass(fitDiagnostics.usageBalance)}`}>
+                        {fitDiagnostics.usageBalance.toFixed(1)}
+                      </span>
+                    </p>
+                    <p>
+                      Spacing Fit:{" "}
+                      <span className={`font-semibold ${spacingFitColorClass(fitDiagnostics.spacingFit)}`}>
+                        {fitDiagnostics.spacingFit.toFixed(1)}
+                      </span>
+                    </p>
+                    <p>
+                      Playmaking Fit:{" "}
+                      <span className={`font-semibold ${playmakingFitColorClass(fitDiagnostics.playmakingFit)}`}>
+                        {fitDiagnostics.playmakingFit.toFixed(1)}
+                      </span>
+                    </p>
+                    <p>
+                      Defense Fit:{" "}
+                      <span className={`font-semibold ${defenseFitColorClass(fitDiagnostics.defenseFit)}`}>
+                        {fitDiagnostics.defenseFit.toFixed(1)}
+                      </span>
+                    </p>
+                    <p>
+                      Usage Penalty:{" "}
+                      <span className={`font-semibold ${usagePenaltyColorClass(fitDiagnostics.usageOverloadPenalty)}`}>
+                        {fitDiagnostics.usageOverloadPenalty.toFixed(1)}
+                      </span>
+                    </p>
+                  </div>
+                </div>
               )}
             </div>
           </RevealBox>

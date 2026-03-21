@@ -8,20 +8,35 @@ import { RevealResult } from "@/components/RevealResult";
 import type { NBATeam } from "@/lib/nba-api";
 import { createEmptyRoster, POSITIONS } from "@/lib/game-types";
 import type { Roster, GameMode } from "@/lib/game-types";
+import type { TeamFitDiagnostics } from "@/lib/game-types";
 
 const DEV_PREFILL = false;
-const DEV_ROSTER: Roster = {
-  PG: { position: "PG", playerId: "201939",  playerName: "Stephen Curry (GSW)",   teamId: "1610612744", naturalPosition: "PG" }, // Golden State Warriors
-  SG: { position: "SG", playerId: "1630162", playerName: "Anthony Edwards (MIN)",  teamId: "1610612750", naturalPosition: "SG" }, // Minnesota Timberwolves
-  SF: { position: "SF", playerId: "202695",  playerName: "Kawhi Leonard (SAS)",    teamId: "1610612759", naturalPosition: "SF" }, // San Antonio Spurs
-  PF: { position: "PF", playerId: "2544",    playerName: "LeBron James (MIA)",     teamId: "1610612748", naturalPosition: "SF" }, // Miami Heat
-  C:  { position: "C",  playerId: "203999",   playerName: "Nikola Jokic (DEN)",     teamId: "1610612743", naturalPosition: "C"  }, // Denver Nuggets
+// const DEV_ROSTER: Roster = {
+//   PG: { position: "PG", playerId: "201939",  playerName: "Stephen Curry (GSW)",   teamId: "1610612744", naturalPosition: "PG" }, // Golden State Warriors
+//   SG: { position: "SG", playerId: "1630162", playerName: "Anthony Edwards (MIN)",  teamId: "1610612750", naturalPosition: "SG" }, // Minnesota Timberwolves
+//   SF: { position: "SF", playerId: "202695",  playerName: "Kawhi Leonard (SAS)",    teamId: "1610612759", naturalPosition: "SF" }, // San Antonio Spurs
+//   PF: { position: "PF", playerId: "2544",    playerName: "LeBron James (MIA)",     teamId: "1610612748", naturalPosition: "SF" }, // Miami Heat
+//   C:  { position: "C",  playerId: "203999",   playerName: "Nikola Jokic (DEN)",     teamId: "1610612743", naturalPosition: "C"  }, // Denver Nuggets
+// };
+
+const DEV_ROSTER_MIN: Roster = {
+  PG: { position: "PG", playerId: "201144", playerName: "Mike Conley (MIN)", teamId: "1610612750", naturalPosition: "PG" },
+  SG: { position: "SG", playerId: "1630162", playerName: "Anthony Edwards (MIN)", teamId: "1610612750", naturalPosition: "SG" },
+  SF: { position: "SF", playerId: "1630183", playerName: "Jaden McDaniels (MIN)", teamId: "1610612750", naturalPosition: "SF" },
+  PF: { position: "PF", playerId: "203944", playerName: "Julius Randle (MIN)", teamId: "1610612750", naturalPosition: "PF" },
+  C: { position: "C", playerId: "203497", playerName: "Rudy Gobert (MIN)", teamId: "1610612750", naturalPosition: "C" },
 };
+
+const DEV_ROSTER: Roster = DEV_ROSTER_MIN;
 
 type SeasonResultData = {
   wins: number;
   losses: number;
   teamPower: number;
+  regularSeasonWinProbability?: number;
+  fitDiagnostics?: TeamFitDiagnostics;
+  baseTalent?: number;
+  meshAdjustedTalent?: number;
   playerScores?: { playerName: string; position: string; pts: number; reb: number; ast: number; score: number }[];
   madePlayoffs: boolean;
   playoffResult: string | null;
@@ -29,6 +44,7 @@ type SeasonResultData = {
   milestones: string[];
   mvp: { playerName: string; position: string; pts: number; reb: number; ast: number; stl: number; blk: number } | null;
   badges: string[];
+  weaknessBadges?: string[];
 };
 
 export default function SoloPage() {
