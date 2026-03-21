@@ -34,6 +34,12 @@ function arg(flag, fallback = null) {
 
 const BASE_URL   = arg("--base-url", "http://localhost:3000");
 const RUNS       = Number(arg("--runs", "3"));
+if (!Number.isFinite(RUNS) || !Number.isInteger(RUNS) || RUNS <= 0) {
+  console.error(`\nInvalid value for --runs: ${String(arg("--runs"))}`);
+  console.error("  --runs must be a finite positive integer (e.g., 1, 3, 10).");
+  console.error("  Example: node scripts/calibrate.mjs --runs 5\n");
+  process.exit(1);
+}
 const SEASON     = arg("--season", "2024-25");
 const TARGETS_PATH = arg("--targets") ?? resolve(__dirname, "seasons", `${SEASON}.json`);
 
