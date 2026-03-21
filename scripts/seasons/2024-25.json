@@ -1,0 +1,21 @@
+{
+  "season": "2024-25",
+  "gameMode": "active_only",
+  "notes": "Top-tier records (OKC, CLE, BOS) are verified final standings. Entries with approx=true are estimated — replace with exact final standings once confirmed.",
+  "teams": [
+    { "abbr": "OKC", "name": "OKC Thunder",           "realW": 68, "realL": 14 },
+    { "abbr": "CLE", "name": "Cleveland Cavaliers",    "realW": 64, "realL": 18 },
+    { "abbr": "BOS", "name": "Boston Celtics",         "realW": 61, "realL": 21 },
+    { "abbr": "HOU", "name": "Houston Rockets",        "realW": 52, "realL": 30, "approx": true },
+    { "abbr": "NYK", "name": "New York Knicks",        "realW": 51, "realL": 31, "approx": true },
+    { "abbr": "DEN", "name": "Denver Nuggets",         "realW": 50, "realL": 32, "approx": true },
+    { "abbr": "MEM", "name": "Memphis Grizzlies",      "realW": 50, "realL": 32, "approx": true },
+    { "abbr": "LAL", "name": "Los Angeles Lakers",     "realW": 50, "realL": 32, "approx": true },
+    { "abbr": "MIN", "name": "Minnesota Timberwolves", "realW": 49, "realL": 33, "approx": true },
+    { "abbr": "GSW", "name": "Golden State Warriors",  "realW": 48, "realL": 34, "approx": true },
+    { "abbr": "SAC", "name": "Sacramento Kings",       "realW": 39, "realL": 43, "approx": true },
+    { "abbr": "SAS", "name": "San Antonio Spurs",      "realW": 34, "realL": 48, "approx": true },
+    { "abbr": "CHA", "name": "Charlotte Hornets",      "realW": 19, "realL": 63, "approx": true },
+    { "abbr": "WAS", "name": "Washington Wizards",     "realW": 18, "realL": 64, "approx": true }
+  ]
+}
