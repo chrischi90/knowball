@@ -28,6 +28,8 @@ export type TeamProfileResult = {
   baseTalent: number;
   meshAdjustedTalent: number;
   teamRating: number;
+  estimatedPointsFor: number;
+  estimatedPointsAgainst: number;
   playerScores: PlayerScoreLine[];
   diagnostics: TeamFitDiagnostics;
 };
@@ -45,9 +47,24 @@ export type MatchupSimulation = {
   team2WinProbability: number;
 };
 
+export type HybridWinBreakdown = {
+  ratingWinProbability: number;
+  pythagoreanWinProbability: number;
+  blendedWinProbability: number;
+  blendWeight: number;
+  team1EstimatedPointsFor: number;
+  team1EstimatedPointsAgainst: number;
+  team2EstimatedPointsFor: number;
+  team2EstimatedPointsAgainst: number;
+};
+
 const CHEMISTRY_WEIGHT = 0.27;
 const WIN_PROBABILITY_SCALE = 22;
 export const BASELINE_TEAM_RATING = 148;
+export const HYBRID_BLEND_WEIGHT = 0.5;
+export const PYTHAG_EXPONENT = 14;
+export const BASELINE_POINTS_FOR = 109;
+export const BASELINE_POINTS_AGAINST = 109;
 
 export const LEAGUE_AVERAGE_STATS: Omit<PlayerStats, "player_id"> = {
   gp: 82,
@@ -396,6 +413,31 @@ export function computeTeamProfile(roster: Roster, stats: PlayerStats[]): TeamPr
   const chemistryMultiplier = 1 + (meshFactor - 1) * CHEMISTRY_WEIGHT;
   const teamRating = baseTalent * chemistryMultiplier;
 
+  const avgPts = mean(playerProfiles.map((p) => p.statLine.pts));
+  const avgAst = mean(playerProfiles.map((p) => p.statLine.ast));
+  const avgTs = mean(playerProfiles.map((p) => deriveTsPct(p.statLine)));
+
+  const estimatedPointsFor = clamp(
+    95 +
+      (teamRating - BASELINE_TEAM_RATING) * 0.38 +
+      (avgPts - 15) * 2.2 +
+      (avgAst - 4.5) * 1.6 +
+      (avgTs - 0.57) * 42 -
+      Math.max(0, avgTovPct - 13) * 0.9,
+    84,
+    136
+  );
+
+  const estimatedPointsAgainst = clamp(
+    111 -
+      (defenseMean - 0.5) * 24 +
+      usageOverloadPenalty * 9 +
+      turnoverPenalty * 6 -
+      Math.max(0, rimProtectors - 1) * 1.3,
+    88,
+    132
+  );
+
   const diagnostics: TeamFitDiagnostics = {
     usageBalance: round1(clamp(1 - usageStd / 11 - Math.max(0, usageSum - 104) / 40, 0, 1) * 100),
     usageOverloadPenalty: round1(usageOverloadPenalty * 100),
@@ -422,6 +464,8 @@ export function computeTeamProfile(roster: Roster, stats: PlayerStats[]): TeamPr
     baseTalent: round1(baseTalent),
     meshAdjustedTalent: round1(baseTalent * meshFactor),
     teamRating: round1(teamRating),
+    estimatedPointsFor: round1(estimatedPointsFor),
+    estimatedPointsAgainst: round1(estimatedPointsAgainst),
     playerScores,
     diagnostics,
   };
@@ -482,8 +526,107 @@ function randomCentered(): number {
   return Math.random() + Math.random() - 1;
 }
 
-export function simulateHeadToHeadGame(team1Rating: number, team2Rating: number): MatchupSimulation {
-  const team1WinProbability = winProbabilityFromRatings(team1Rating, team2Rating);
+function round3(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+function estimateMatchupScoring(teamPointsFor: number, opponentPointsAgainst: number): number {
+  return clamp(teamPointsFor * 0.56 + opponentPointsAgainst * 0.44, 78, 145);
+}
+
+export function pythagoreanWinProbability(
+  pointsFor: number,
+  pointsAgainst: number,
+  exponent: number = PYTHAG_EXPONENT
+): number {
+  const pf = clamp(pointsFor, 70, 160);
+  const pa = clamp(pointsAgainst, 70, 160);
+  const exp = clamp(exponent, 4, 20);
+
+  const pfPower = pf ** exp;
+  const paPower = pa ** exp;
+  const denominator = pfPower + paPower;
+  if (!Number.isFinite(denominator) || denominator <= 0) return 0.5;
+
+  return clamp(pfPower / denominator, 0.05, 0.95);
+}
+
+export function blendWinProbabilities(
+  ratingWinProbability: number,
+  pythagoreanWinProbabilityValue: number,
+  blendWeight: number = HYBRID_BLEND_WEIGHT
+): number {
+  const weight = clamp(blendWeight, 0, 1);
+  const blended = ratingWinProbability * weight + pythagoreanWinProbabilityValue * (1 - weight);
+  return clamp(blended, 0.05, 0.95);
+}
+
+export function computeHybridMatchupWinProbability(
+  team1Profile: TeamProfileResult,
+  team2Profile: TeamProfileResult,
+  blendWeight: number = HYBRID_BLEND_WEIGHT
+): HybridWinBreakdown {
+  const ratingWinProbability = winProbabilityFromRatings(team1Profile.teamRating, team2Profile.teamRating);
+  const team1MatchupPF = estimateMatchupScoring(
+    team1Profile.estimatedPointsFor,
+    team2Profile.estimatedPointsAgainst
+  );
+  const team2MatchupPF = estimateMatchupScoring(
+    team2Profile.estimatedPointsFor,
+    team1Profile.estimatedPointsAgainst
+  );
+  const pythagoreanWinProbabilityValue = pythagoreanWinProbability(team1MatchupPF, team2MatchupPF);
+  const blendedWinProbability = blendWinProbabilities(
+    ratingWinProbability,
+    pythagoreanWinProbabilityValue,
+    blendWeight
+  );
+
+  return {
+    ratingWinProbability: round3(ratingWinProbability),
+    pythagoreanWinProbability: round3(pythagoreanWinProbabilityValue),
+    blendedWinProbability: round3(blendedWinProbability),
+    blendWeight: round3(clamp(blendWeight, 0, 1)),
+    team1EstimatedPointsFor: round1(team1MatchupPF),
+    team1EstimatedPointsAgainst: round1(team2MatchupPF),
+    team2EstimatedPointsFor: round1(team2MatchupPF),
+    team2EstimatedPointsAgainst: round1(team1MatchupPF),
+  };
+}
+
+export function computeHybridVsBaselineWinProbability(
+  teamProfile: TeamProfileResult,
+  baselineTeamRating: number = BASELINE_TEAM_RATING,
+  blendWeight: number = HYBRID_BLEND_WEIGHT
+): Omit<HybridWinBreakdown, "team2EstimatedPointsFor" | "team2EstimatedPointsAgainst"> {
+  const ratingWinProbability = winProbabilityFromRatings(teamProfile.teamRating, baselineTeamRating);
+  const teamMatchupPF = estimateMatchupScoring(teamProfile.estimatedPointsFor, BASELINE_POINTS_AGAINST);
+  const teamMatchupPA = estimateMatchupScoring(BASELINE_POINTS_FOR, teamProfile.estimatedPointsAgainst);
+  const pythagoreanWinProbabilityValue = pythagoreanWinProbability(teamMatchupPF, teamMatchupPA);
+  const blendedWinProbability = blendWinProbabilities(
+    ratingWinProbability,
+    pythagoreanWinProbabilityValue,
+    blendWeight
+  );
+
+  return {
+    ratingWinProbability: round3(ratingWinProbability),
+    pythagoreanWinProbability: round3(pythagoreanWinProbabilityValue),
+    blendedWinProbability: round3(blendedWinProbability),
+    blendWeight: round3(clamp(blendWeight, 0, 1)),
+    team1EstimatedPointsFor: round1(teamMatchupPF),
+    team1EstimatedPointsAgainst: round1(teamMatchupPA),
+  };
+}
+
+export function simulateHeadToHeadGame(
+  team1Rating: number,
+  team2Rating: number,
+  team1WinProbabilityOverride?: number
+): MatchupSimulation {
+  const team1WinProbability = isFiniteNumber(team1WinProbabilityOverride)
+    ? clamp(team1WinProbabilityOverride, 0.05, 0.95)
+    : winProbabilityFromRatings(team1Rating, team2Rating);
   const team2WinProbability = 1 - team1WinProbability;
   const team1Wins = Math.random() < team1WinProbability;
 

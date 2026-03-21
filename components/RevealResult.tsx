@@ -31,11 +31,22 @@ type SeasonResultData = {
   losses: number;
   teamPower: number;
   regularSeasonWinProbability?: number;
+  ratingWinProbability?: number;
+  pythagoreanWinProbability?: number;
+  hybridBlendWeight?: number;
+  expectedWinsRating?: number;
+  expectedWinsPythagorean?: number;
+  expectedWinsBlended?: number;
+  estimatedPointsFor?: number;
+  estimatedPointsAgainst?: number;
+  matchupEstimatedPointsFor?: number;
+  matchupEstimatedPointsAgainst?: number;
   fitDiagnostics?: TeamFitDiagnostics;
   baseTalent?: number;
   meshAdjustedTalent?: number;
   playerScores?: PlayerScore[];
   madePlayoffs: boolean;
+  playoffSeed?: number | null;
   playoffResult: string | null;
   rounds: { name: string; wins: number; losses: number }[];
   milestones: string[];
@@ -205,6 +216,9 @@ function ShareModal({ result, roster, headline, headlineColor, onClose }: ShareM
         <div>
           <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Postseason</p>
           <p className={`font-funnel-display text-base font-semibold mb-2 ${headlineColor}`}>{headline}</p>
+          {result.madePlayoffs && typeof result.playoffSeed === "number" && (
+            <p className="text-xs text-zinc-400 mb-2">Seed: #{result.playoffSeed}</p>
+          )}
           {result.madePlayoffs && result.rounds.length > 0 && (
             <ul className="space-y-1 text-sm">
               {result.rounds.map((r) => {
@@ -240,9 +254,20 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
     losses,
     teamPower,
     regularSeasonWinProbability,
+    ratingWinProbability,
+    pythagoreanWinProbability,
+    hybridBlendWeight,
+    expectedWinsRating,
+    expectedWinsPythagorean,
+    expectedWinsBlended,
+    estimatedPointsFor,
+    estimatedPointsAgainst,
+    matchupEstimatedPointsFor,
+    matchupEstimatedPointsAgainst,
     fitDiagnostics,
     playerScores,
     madePlayoffs,
+    playoffSeed,
     playoffResult,
     rounds,
     badges,
@@ -335,6 +360,36 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
               {typeof regularSeasonWinProbability === "number" && (
                 <p className="text-xs text-zinc-600 mt-1">
                   Per-game win probability: {(regularSeasonWinProbability * 100).toFixed(1)}%
+                </p>
+              )}
+              {(typeof ratingWinProbability === "number" ||
+                typeof pythagoreanWinProbability === "number" ||
+                typeof hybridBlendWeight === "number") && (
+                <p className="text-xs text-zinc-600 mt-1">
+                  Hybrid model:{" "}
+                  {typeof hybridBlendWeight === "number" ? `${Math.round(hybridBlendWeight * 100)}%` : "50%"} rating /{" "}
+                  {typeof hybridBlendWeight === "number"
+                    ? `${Math.round((1 - hybridBlendWeight) * 100)}%`
+                    : "50%"}{" "}
+                  pythagorean
+                </p>
+              )}
+              {(typeof expectedWinsRating === "number" ||
+                typeof expectedWinsPythagorean === "number" ||
+                typeof expectedWinsBlended === "number") && (
+                <p className="text-xs text-zinc-600 mt-1">
+                  Expected wins: {typeof expectedWinsBlended === "number" ? expectedWinsBlended.toFixed(1) : "-"}
+                  {" "}(rating {typeof expectedWinsRating === "number" ? expectedWinsRating.toFixed(1) : "-"},
+                  {" "}pyth {typeof expectedWinsPythagorean === "number" ? expectedWinsPythagorean.toFixed(1) : "-"})
+                </p>
+              )}
+              {(typeof estimatedPointsFor === "number" || typeof estimatedPointsAgainst === "number") && (
+                <p className="text-xs text-zinc-600 mt-1">
+                  Estimated PF/PA: {typeof estimatedPointsFor === "number" ? estimatedPointsFor.toFixed(1) : "-"}/{" "}
+                  {typeof estimatedPointsAgainst === "number" ? estimatedPointsAgainst.toFixed(1) : "-"}
+                  {typeof matchupEstimatedPointsFor === "number" && typeof matchupEstimatedPointsAgainst === "number"
+                    ? ` (matchup ${matchupEstimatedPointsFor.toFixed(1)}/${matchupEstimatedPointsAgainst.toFixed(1)})`
+                    : ""}
                 </p>
               )}
             </div>
@@ -544,6 +599,9 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
                   <p className={`font-funnel-display text-lg font-semibold mb-3 ${headlineColor}`}>
                     {headline}
                   </p>
+                  {typeof playoffSeed === "number" && (
+                    <p className="text-xs text-zinc-400 mb-3">Seed: #{playoffSeed}</p>
+                  )}
                   <ul className="space-y-2">
                     {rounds.map((r) => {
                       const won = r.wins === 4;

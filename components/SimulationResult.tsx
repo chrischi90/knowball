@@ -14,6 +14,17 @@ type SimulationResultProps = {
     team2Score: number;
     team1WinProbability?: number;
     team2WinProbability?: number;
+    team1RatingWinProbability?: number;
+    team2RatingWinProbability?: number;
+    team1PythagoreanWinProbability?: number;
+    team2PythagoreanWinProbability?: number;
+    team1BlendedWinProbability?: number;
+    team2BlendedWinProbability?: number;
+    hybridBlendWeight?: number;
+    team1EstimatedPointsFor?: number;
+    team1EstimatedPointsAgainst?: number;
+    team2EstimatedPointsFor?: number;
+    team2EstimatedPointsAgainst?: number;
     team1Diagnostics?: TeamFitDiagnostics;
     team2Diagnostics?: TeamFitDiagnostics;
     playerStats1?: Record<string, PlayerStat>;
@@ -138,7 +149,6 @@ export function SimulationResult({
   result,
   roster1,
   roster2,
-  gameId: _gameId,
   onRematch,
 }: SimulationResultProps) {
   const router = useRouter();
@@ -149,6 +159,17 @@ export function SimulationResult({
     team2Score,
     team1WinProbability,
     team2WinProbability,
+    team1RatingWinProbability,
+    team2RatingWinProbability,
+    team1PythagoreanWinProbability,
+    team2PythagoreanWinProbability,
+    team1BlendedWinProbability,
+    team2BlendedWinProbability,
+    hybridBlendWeight,
+    team1EstimatedPointsFor,
+    team1EstimatedPointsAgainst,
+    team2EstimatedPointsFor,
+    team2EstimatedPointsAgainst,
     team1Diagnostics,
     team2Diagnostics,
     playerStats1,
@@ -237,6 +258,36 @@ export function SimulationResult({
           <p className="text-sm text-zinc-200">
             Player 1: {(team1WinProbability * 100).toFixed(1)}% | Player 2: {(team2WinProbability * 100).toFixed(1)}%
           </p>
+          {(typeof team1RatingWinProbability === "number" ||
+            typeof team1PythagoreanWinProbability === "number" ||
+            typeof hybridBlendWeight === "number") && (
+            <p className="text-xs text-zinc-400 mt-1">
+              Blend: {typeof hybridBlendWeight === "number" ? Math.round(hybridBlendWeight * 100) : 50}% rating /{" "}
+              {typeof hybridBlendWeight === "number" ? Math.round((1 - hybridBlendWeight) * 100) : 50}% pythagorean
+            </p>
+          )}
+          {(typeof team1RatingWinProbability === "number" && typeof team2RatingWinProbability === "number") && (
+            <p className="text-xs text-zinc-400 mt-1">
+              Rating odds: {(team1RatingWinProbability * 100).toFixed(1)}% | {(team2RatingWinProbability * 100).toFixed(1)}%
+            </p>
+          )}
+          {(typeof team1PythagoreanWinProbability === "number" &&
+            typeof team2PythagoreanWinProbability === "number") && (
+            <p className="text-xs text-zinc-400 mt-1">
+              Pythagorean odds: {(team1PythagoreanWinProbability * 100).toFixed(1)}% | {(team2PythagoreanWinProbability * 100).toFixed(1)}%
+            </p>
+          )}
+          {(typeof team1BlendedWinProbability === "number" && typeof team2BlendedWinProbability === "number") && (
+            <p className="text-xs text-zinc-300 mt-1">
+              Blended odds: {(team1BlendedWinProbability * 100).toFixed(1)}% | {(team2BlendedWinProbability * 100).toFixed(1)}%
+            </p>
+          )}
+          {(typeof team1EstimatedPointsFor === "number" && typeof team2EstimatedPointsFor === "number") && (
+            <p className="text-xs text-zinc-400 mt-1">
+              Estimated PF/PA: P1 {team1EstimatedPointsFor.toFixed(1)}/{typeof team1EstimatedPointsAgainst === "number" ? team1EstimatedPointsAgainst.toFixed(1) : "-"}
+              {" "}| P2 {team2EstimatedPointsFor.toFixed(1)}/{typeof team2EstimatedPointsAgainst === "number" ? team2EstimatedPointsAgainst.toFixed(1) : "-"}
+            </p>
+          )}
         </div>
       )}
 
