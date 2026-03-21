@@ -46,6 +46,7 @@ type SeasonResultData = {
   meshAdjustedTalent?: number;
   playerScores?: PlayerScore[];
   madePlayoffs: boolean;
+  playoffSeed?: number | null;
   playoffResult: string | null;
   rounds: { name: string; wins: number; losses: number }[];
   milestones: string[];
@@ -215,6 +216,9 @@ function ShareModal({ result, roster, headline, headlineColor, onClose }: ShareM
         <div>
           <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Postseason</p>
           <p className={`font-funnel-display text-base font-semibold mb-2 ${headlineColor}`}>{headline}</p>
+          {result.madePlayoffs && typeof result.playoffSeed === "number" && (
+            <p className="text-xs text-zinc-400 mb-2">Seed: #{result.playoffSeed}</p>
+          )}
           {result.madePlayoffs && result.rounds.length > 0 && (
             <ul className="space-y-1 text-sm">
               {result.rounds.map((r) => {
@@ -263,6 +267,7 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
     fitDiagnostics,
     playerScores,
     madePlayoffs,
+    playoffSeed,
     playoffResult,
     rounds,
     badges,
@@ -594,6 +599,9 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
                   <p className={`font-funnel-display text-lg font-semibold mb-3 ${headlineColor}`}>
                     {headline}
                   </p>
+                  {typeof playoffSeed === "number" && (
+                    <p className="text-xs text-zinc-400 mb-3">Seed: #{playoffSeed}</p>
+                  )}
                   <ul className="space-y-2">
                     {rounds.map((r) => {
                       const won = r.wins === 4;

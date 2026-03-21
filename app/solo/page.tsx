@@ -49,6 +49,7 @@ type SeasonResultData = {
   meshAdjustedTalent?: number;
   playerScores?: { playerName: string; position: string; pts: number; reb: number; ast: number; score: number }[];
   madePlayoffs: boolean;
+  playoffSeed?: number | null;
   playoffResult: string | null;
   rounds: { name: string; wins: number; losses: number }[];
   milestones: string[];
