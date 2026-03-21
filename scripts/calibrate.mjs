@@ -199,8 +199,9 @@ async function main() {
 
     let players;
     try {
+      const activeOnly = GAME_MODE !== "all_time";
       const d = await getJSON(
-        `${BASE_URL}/api/teams/${team.id}/players?active_only=true`
+        `${BASE_URL}/api/teams/${team.id}/players?active_only=${activeOnly}`
       );
       players = d.players;
     } catch (e) {
