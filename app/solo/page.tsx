@@ -34,6 +34,16 @@ type SeasonResultData = {
   losses: number;
   teamPower: number;
   regularSeasonWinProbability?: number;
+  ratingWinProbability?: number;
+  pythagoreanWinProbability?: number;
+  hybridBlendWeight?: number;
+  expectedWinsRating?: number;
+  expectedWinsPythagorean?: number;
+  expectedWinsBlended?: number;
+  estimatedPointsFor?: number;
+  estimatedPointsAgainst?: number;
+  matchupEstimatedPointsFor?: number;
+  matchupEstimatedPointsAgainst?: number;
   fitDiagnostics?: TeamFitDiagnostics;
   baseTalent?: number;
   meshAdjustedTalent?: number;

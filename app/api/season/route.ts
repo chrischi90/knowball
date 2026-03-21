@@ -4,10 +4,10 @@ import type { Roster } from "@/lib/game-types";
 import { POSITIONS } from "@/lib/game-types";
 import {
   BASELINE_TEAM_RATING,
+  computeHybridVsBaselineWinProbability,
   computeTeamProfile,
   deriveTeamBadges,
   resolveRosterStats,
-  winProbabilityFromRatings,
 } from "@/lib/simulation-engine";
 
 type Body = { roster: Roster; gameMode?: string };
@@ -62,8 +62,12 @@ export async function POST(req: Request) {
     const playerScores = teamProfile.playerScores;
     const teamPower = teamProfile.teamRating;
 
-    // Win probability per game vs league baseline team strength.
-    const pWin = winProbabilityFromRatings(teamPower, BASELINE_TEAM_RATING);
+    // Blend rating-based odds with pythagorean-style expectation for hybrid realism.
+    const hybrid = computeHybridVsBaselineWinProbability(teamProfile, BASELINE_TEAM_RATING);
+    const pWin = hybrid.blendedWinProbability;
+    const expectedWinsRating = Math.round(hybrid.ratingWinProbability * 82 * 10) / 10;
+    const expectedWinsPythagorean = Math.round(hybrid.pythagoreanWinProbability * 82 * 10) / 10;
+    const expectedWinsBlended = Math.round(hybrid.blendedWinProbability * 82 * 10) / 10;
 
     // Simulate 82-game regular season
     let wins = 0;
@@ -120,7 +124,17 @@ export async function POST(req: Request) {
       wins,
       losses,
       teamPower: Math.round(teamPower * 10) / 10,
-      regularSeasonWinProbability: Math.round(pWin * 1000) / 1000,
+      regularSeasonWinProbability: hybrid.blendedWinProbability,
+      ratingWinProbability: hybrid.ratingWinProbability,
+      pythagoreanWinProbability: hybrid.pythagoreanWinProbability,
+      hybridBlendWeight: hybrid.blendWeight,
+      expectedWinsRating,
+      expectedWinsPythagorean,
+      expectedWinsBlended,
+      estimatedPointsFor: teamProfile.estimatedPointsFor,
+      estimatedPointsAgainst: teamProfile.estimatedPointsAgainst,
+      matchupEstimatedPointsFor: hybrid.team1EstimatedPointsFor,
+      matchupEstimatedPointsAgainst: hybrid.team1EstimatedPointsAgainst,
       fitDiagnostics: teamProfile.diagnostics,
       baseTalent: teamProfile.baseTalent,
       meshAdjustedTalent: teamProfile.meshAdjustedTalent,

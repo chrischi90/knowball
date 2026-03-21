@@ -4,6 +4,7 @@ import type { Roster } from "@/lib/game-types";
 import { POSITIONS } from "@/lib/game-types";
 import {
   buildStatsMap,
+  computeHybridMatchupWinProbability,
   computeTeamProfile,
   resolveRosterStats,
   simulateHeadToHeadGame,
@@ -54,7 +55,12 @@ export async function POST(req: Request) {
     const stats2 = resolveRosterStats(roster2, rawStats2);
     const team1Profile = computeTeamProfile(roster1, stats1);
     const team2Profile = computeTeamProfile(roster2, stats2);
-    const gameResult = simulateHeadToHeadGame(team1Profile.teamRating, team2Profile.teamRating);
+    const hybrid = computeHybridMatchupWinProbability(team1Profile, team2Profile);
+    const gameResult = simulateHeadToHeadGame(
+      team1Profile.teamRating,
+      team2Profile.teamRating,
+      hybrid.blendedWinProbability
+    );
 
     return NextResponse.json({
       winner: gameResult.winner,
@@ -62,8 +68,19 @@ export async function POST(req: Request) {
       team2Score: gameResult.team2Score,
       team1WinProbability: gameResult.team1WinProbability,
       team2WinProbability: gameResult.team2WinProbability,
+      team1RatingWinProbability: hybrid.ratingWinProbability,
+      team2RatingWinProbability: Math.round((1 - hybrid.ratingWinProbability) * 1000) / 1000,
+      team1PythagoreanWinProbability: hybrid.pythagoreanWinProbability,
+      team2PythagoreanWinProbability: Math.round((1 - hybrid.pythagoreanWinProbability) * 1000) / 1000,
+      team1BlendedWinProbability: hybrid.blendedWinProbability,
+      team2BlendedWinProbability: Math.round((1 - hybrid.blendedWinProbability) * 1000) / 1000,
+      hybridBlendWeight: hybrid.blendWeight,
       team1Rating: team1Profile.teamRating,
       team2Rating: team2Profile.teamRating,
+      team1EstimatedPointsFor: hybrid.team1EstimatedPointsFor,
+      team1EstimatedPointsAgainst: hybrid.team1EstimatedPointsAgainst,
+      team2EstimatedPointsFor: hybrid.team2EstimatedPointsFor,
+      team2EstimatedPointsAgainst: hybrid.team2EstimatedPointsAgainst,
       team1Diagnostics: team1Profile.diagnostics,
       team2Diagnostics: team2Profile.diagnostics,
       playerStats1: buildStatsMap(roster1, stats1),

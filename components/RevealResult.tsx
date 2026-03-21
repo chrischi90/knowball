@@ -31,6 +31,16 @@ type SeasonResultData = {
   losses: number;
   teamPower: number;
   regularSeasonWinProbability?: number;
+  ratingWinProbability?: number;
+  pythagoreanWinProbability?: number;
+  hybridBlendWeight?: number;
+  expectedWinsRating?: number;
+  expectedWinsPythagorean?: number;
+  expectedWinsBlended?: number;
+  estimatedPointsFor?: number;
+  estimatedPointsAgainst?: number;
+  matchupEstimatedPointsFor?: number;
+  matchupEstimatedPointsAgainst?: number;
   fitDiagnostics?: TeamFitDiagnostics;
   baseTalent?: number;
   meshAdjustedTalent?: number;
@@ -240,6 +250,16 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
     losses,
     teamPower,
     regularSeasonWinProbability,
+    ratingWinProbability,
+    pythagoreanWinProbability,
+    hybridBlendWeight,
+    expectedWinsRating,
+    expectedWinsPythagorean,
+    expectedWinsBlended,
+    estimatedPointsFor,
+    estimatedPointsAgainst,
+    matchupEstimatedPointsFor,
+    matchupEstimatedPointsAgainst,
     fitDiagnostics,
     playerScores,
     madePlayoffs,
@@ -335,6 +355,36 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
               {typeof regularSeasonWinProbability === "number" && (
                 <p className="text-xs text-zinc-600 mt-1">
                   Per-game win probability: {(regularSeasonWinProbability * 100).toFixed(1)}%
+                </p>
+              )}
+              {(typeof ratingWinProbability === "number" ||
+                typeof pythagoreanWinProbability === "number" ||
+                typeof hybridBlendWeight === "number") && (
+                <p className="text-xs text-zinc-600 mt-1">
+                  Hybrid model:{" "}
+                  {typeof hybridBlendWeight === "number" ? `${Math.round(hybridBlendWeight * 100)}%` : "50%"} rating /{" "}
+                  {typeof hybridBlendWeight === "number"
+                    ? `${Math.round((1 - hybridBlendWeight) * 100)}%`
+                    : "50%"}{" "}
+                  pythagorean
+                </p>
+              )}
+              {(typeof expectedWinsRating === "number" ||
+                typeof expectedWinsPythagorean === "number" ||
+                typeof expectedWinsBlended === "number") && (
+                <p className="text-xs text-zinc-600 mt-1">
+                  Expected wins: {typeof expectedWinsBlended === "number" ? expectedWinsBlended.toFixed(1) : "-"}
+                  {" "}(rating {typeof expectedWinsRating === "number" ? expectedWinsRating.toFixed(1) : "-"},
+                  {" "}pyth {typeof expectedWinsPythagorean === "number" ? expectedWinsPythagorean.toFixed(1) : "-"})
+                </p>
+              )}
+              {(typeof estimatedPointsFor === "number" || typeof estimatedPointsAgainst === "number") && (
+                <p className="text-xs text-zinc-600 mt-1">
+                  Estimated PF/PA: {typeof estimatedPointsFor === "number" ? estimatedPointsFor.toFixed(1) : "-"}/{" "}
+                  {typeof estimatedPointsAgainst === "number" ? estimatedPointsAgainst.toFixed(1) : "-"}
+                  {typeof matchupEstimatedPointsFor === "number" && typeof matchupEstimatedPointsAgainst === "number"
+                    ? ` (matchup ${matchupEstimatedPointsFor.toFixed(1)}/${matchupEstimatedPointsAgainst.toFixed(1)})`
+                    : ""}
                 </p>
               )}
             </div>
