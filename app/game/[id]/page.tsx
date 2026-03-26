@@ -26,6 +26,7 @@ export default function GamePage() {
   const [copied, setCopied] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [simulating, setSimulating] = useState(false);
+  const [remoteSpinTarget, setRemoteSpinTarget] = useState<number | null>(null);
 
   // Persist playerNumber to sessionStorage so a reconnecting socket can reclaim its slot
   useEffect(() => {
@@ -70,19 +71,22 @@ export default function GamePage() {
     };
     const onWheel = () => { setGame((g) => (g ? { ...g } : null)); };
     const onSimStarted = () => setSimulating(true);
+    const onSpinStarted = ({ targetDisplayRotation }: { targetDisplayRotation: number }) => {
+      setRemoteSpinTarget(targetDisplayRotation);
+    };
     socket.on("game_state", onState);
     socket.on("wheel_result", onWheel);
     socket.on("simulation_started", onSimStarted);
+    socket.on("spin_started", onSpinStarted);
 
-    const inRoom = gameId && gameId.length === 8;
-    if (inRoom && !game) {
+    const rejoinGame = () => {
+      if (!gameId || gameId.length !== 8) return;
       socket.emit("get_state", { gameId }, (state: GameState | null) => {
         if (state) {
           setGame(state);
           if (state.player1?.socketId === socket.id) setPlayerNumber(1);
           else if (state.player2?.socketId === socket.id) setPlayerNumber(2);
         } else {
-          // Pass any saved playerNumber so a reconnected socket can reclaim its slot
           const {
             playerNumber: claimPlayerNumber,
             reconnectToken: claimReconnectToken,
@@ -103,12 +107,21 @@ export default function GamePage() {
           });
         }
       });
+    };
+
+    // Re-join the room on reconnect (socket gets a new ID and loses all rooms)
+    socket.on("connect", rejoinGame);
+
+    if (gameId && gameId.length === 8 && !game) {
+      rejoinGame();
     }
 
     return () => {
       socket.off("game_state", onState);
       socket.off("wheel_result", onWheel);
       socket.off("simulation_started", onSimStarted);
+      socket.off("spin_started", onSpinStarted);
+      socket.off("connect", rejoinGame);
     };
   }, [gameId]);
 
@@ -238,15 +251,13 @@ export default function GamePage() {
     return (
       <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
         <div className="text-center">
+          <div className="mb-6 flex justify-center">
+            <img src="/Loading.gif" alt="Loading..." style={{ width: 120, height: 120 }} />
+          </div>
           <p className="font-funnel-display text-3xl font-semibold text-white mb-3 animate-pulse">
             Simulating game…
           </p>
           <p className="text-zinc-400 text-lg">Calculating stats for both rosters</p>
-          <div className="mt-6 flex justify-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-orange-500 animate-bounce [animation-delay:-0.3s]" />
-            <span className="w-2 h-2 rounded-full bg-orange-500 animate-bounce [animation-delay:-0.15s]" />
-            <span className="w-2 h-2 rounded-full bg-orange-500 animate-bounce" />
-          </div>
         </div>
       </main>
     );
@@ -280,6 +291,7 @@ export default function GamePage() {
   const myNumber = playerNumber;
   const canStart = game.phase === "lobby" && isPlayer1 && game.player1 && game.player2;
   const isMyTurn = game.phase === "drafting" && myNumber === game.currentTurn && !game.wheelTeamId;
+  const isActiveTurn = game.phase === "drafting" && myNumber === game.currentTurn;
   const showWheel = game.phase === "drafting" && teams.length > 0;
   const showPick = game.phase === "drafting" && game.wheelTeamId && game.currentTurn === myNumber;
   const bothFull =
@@ -339,15 +351,13 @@ export default function GamePage() {
           ) : (
             <span className="text-zinc-400 text-sm">Game: {gameId}</span>
           )}
-          {myNumber && (
-            <button
-              type="button"
-              onClick={() => setShowLeaveModal(true)}
-              className="font-funnel-display text-white text-lg font-medium hover:text-zinc-300 transition text-left"
-            >
-              Knowball
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setShowLeaveModal(true)}
+            className="font-funnel-display text-white text-lg font-medium hover:text-zinc-300 transition text-left"
+          >
+            Knowball
+          </button>
         </div>
 
         {error && (
@@ -467,10 +477,16 @@ export default function GamePage() {
               teams={teams}
               currentTeamId={game.wheelTeamId}
               isMyTurn={isMyTurn}
+              isActiveTurn={isActiveTurn}
               gameId={gameId}
               myNumber={myNumber}
               currentTurn={game.currentTurn}
               onSpin={handleSpin}
+              remoteSpinTarget={isMyTurn ? null : remoteSpinTarget}
+              onSpinBroadcast={(targetDisplayRotation) => {
+                const socket = getSocket();
+                socket.emit("spin_started", { gameId, targetDisplayRotation });
+              }}
             />
           </div>
         )}

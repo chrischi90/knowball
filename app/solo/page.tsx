@@ -184,17 +184,15 @@ export default function SoloPage() {
     return (
       <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
         <div className="text-center">
+          <div className="mb-6 flex justify-center">
+            <img src="/Loading.gif" alt="Loading..." style={{ width: 120, height: 120 }} />
+          </div>
           <p className="font-funnel-display text-3xl font-semibold text-white mb-3 animate-pulse">
             Simulating your season…
           </p>
           <p className="text-zinc-400 text-lg tabular-nums">
             Game {gameCount} of 82
           </p>
-          <div className="mt-6 flex justify-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-orange-500 animate-bounce [animation-delay:-0.3s]" />
-            <span className="w-2 h-2 rounded-full bg-orange-500 animate-bounce [animation-delay:-0.15s]" />
-            <span className="w-2 h-2 rounded-full bg-orange-500 animate-bounce" />
-          </div>
         </div>
       </main>
     );
@@ -204,12 +202,45 @@ export default function SoloPage() {
   if (phase === "simulation") {
     return (
       <main className="min-h-screen bg-black text-white p-4">
+        {showLeaveModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70"
+            aria-modal="true"
+            role="dialog"
+            aria-labelledby="leave-modal-title"
+          >
+            <div className="rounded-lg bg-zinc-900 border border-zinc-700 p-6 w-full max-w-sm shadow-xl">
+              <h2 id="leave-modal-title" className="font-funnel-display text-xl font-semibold text-white mb-4">
+                Are you sure you want to leave this game?
+              </h2>
+              <div className="flex gap-3 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowLeaveModal(false)}
+                  className="px-4 py-2.5 rounded-md bg-zinc-700 hover:bg-zinc-600 text-white font-medium transition"
+                >
+                  No
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowLeaveModal(false);
+                    router.push("/");
+                  }}
+                  className="px-4 py-2.5 rounded-md bg-red-600 hover:bg-red-500 text-white font-medium transition"
+                >
+                  Yes, leave
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="max-w-lg mx-auto">
           <div className="flex items-center justify-between mb-4 pt-2">
             <span className="text-zinc-400 text-sm">Solo Draft</span>
             <button
               type="button"
-              onClick={() => router.push("/")}
+              onClick={() => setShowLeaveModal(true)}
               className="font-funnel-display text-white text-lg font-medium hover:text-zinc-300 transition"
             >
               Knowball

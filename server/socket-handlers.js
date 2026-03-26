@@ -364,6 +364,15 @@ function registerSocketHandlers(io) {
       broadcastGameState(io, gameId, updated);
     });
 
+    socket.on("spin_started", ({ gameId: payloadGameId, targetDisplayRotation }) => {
+      const game = getGame(payloadGameId);
+      if (!game || game.phase !== "drafting") return;
+      if (!socket.rooms.has(payloadGameId)) return;
+      const pn = getPlayerNum(socket, game);
+      if (!pn || game.currentTurn !== pn) return;
+      socket.to(payloadGameId).emit("spin_started", { targetDisplayRotation });
+    });
+
     socket.on("cache_teams", ({ gameId, teams }) => {
       const game = getGame(gameId);
       if (game) game._teamsCache = teams;
