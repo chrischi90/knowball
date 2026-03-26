@@ -1,11 +1,9 @@
 <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-<g clip-path="url(#clip0_2_2)">
-<rect width="32" height="32" rx="5" fill="black"/>
-<path d="M5.73417 38V-5.2H10.8542V16.3467H11.0675L33.8942 -5.2H40.3475L20.2942 13.7333L41.0408 38H34.5875L16.4008 16.72L10.8542 21.0933V38H5.73417Z" fill="white"/>
-</g>
-<defs>
-<clipPath id="clip0_2_2">
-<rect width="32" height="32" rx="5" fill="white"/>
-</clipPath>
-</defs>
+<ellipse cx="14.9721" cy="8.85979" rx="8.82969" ry="8.85979" fill="black"/>
+<ellipse cx="24.9535" cy="11.9415" rx="5.75849" ry="5.77813" fill="black"/>
+<ellipse cx="16.5077" cy="15.3308" rx="8.06189" ry="8.08938" fill="black"/>
+<ellipse cx="8.82969" cy="17.3344" rx="6.52629" ry="6.54854" fill="black"/>
+<ellipse cx="4.2229" cy="10.4006" rx="4.2229" ry="4.23729" fill="black"/>
+<ellipse cx="26.9898" cy="22" rx="2.98981" ry="3" fill="black"/>
+<ellipse cx="29.188" cy="27.1818" rx="1.812" ry="1.81818" fill="black"/>
 </svg>
