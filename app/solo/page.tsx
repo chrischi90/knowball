@@ -372,6 +372,7 @@ export default function SoloPage() {
             teams={teams}
             currentTeamId={wheelTeamId}
             isMyTurn={!wheelTeamId}
+            isActiveTurn={!wheelTeamId}
             gameId="solo"
             myNumber={1}
             currentTurn={1}
