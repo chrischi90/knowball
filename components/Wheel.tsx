@@ -7,11 +7,14 @@ type WheelProps = {
   teams: NBATeam[];
   currentTeamId: string | null;
   isMyTurn: boolean;
+  isActiveTurn: boolean;
   gameId: string;
   myNumber: 1 | 2 | null;
   currentTurn: 1 | 2;
   onSpin: (result: { teamIndex: number; teamId: string; teamName: string }) => void;
   onSpinStart?: () => void;
+  onSpinBroadcast?: (targetDisplayRotation: number) => void;
+  remoteSpinTarget?: number | null;
 };
 
 const SEGMENT_DEG = 360 / 30;
@@ -32,13 +35,14 @@ function getTeamColor(abbreviation: string): string {
   return NBA_TEAM_COLORS[abbreviation] || "#4B5563";
 }
 
-export function Wheel({ teams, currentTeamId, isMyTurn, gameId, myNumber, currentTurn, onSpin, onSpinStart }: WheelProps) {
+export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, myNumber, currentTurn, onSpin, onSpinStart, onSpinBroadcast, remoteSpinTarget }: WheelProps) {
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [landedIndex, setLandedIndex] = useState<number | null>(null);
   const [showResult, setShowResult] = useState(false);
   const wheelRef = useRef<HTMLDivElement>(null);
   const prevTeamIdRef = useRef<string | null>(null);
+  const lastRemoteTargetRef = useRef<number | null>(null);
   
   // Memoize colors using official NBA team colors
   const colorMap = useMemo(() => {
@@ -48,6 +52,39 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, myNumber, curren
     });
     return map;
   }, [teams.length, teams]);
+
+  // Play the spin animation when the other player spins
+  useEffect(() => {
+    if (remoteSpinTarget == null) return;
+    if (lastRemoteTargetRef.current === remoteSpinTarget) return;
+    if (isMyTurn || spinning) return;
+    lastRemoteTargetRef.current = remoteSpinTarget;
+
+    setSpinning(true);
+    setLandedIndex(null);
+    setShowResult(false);
+
+    const startRot = rotation;
+    const diff = ((remoteSpinTarget - startRot) % 360 + 360) % 360;
+    const totalRotation = 4 * 360 + diff;
+    const duration = 4000;
+    const start = performance.now();
+
+    const animate = (now: number) => {
+      const elapsed = now - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const easeOut = 1 - Math.pow(1 - progress, 3);
+      const current = startRot + totalRotation * easeOut;
+      setRotation(current % 360);
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        setSpinning(false);
+        setRotation(remoteSpinTarget);
+      }
+    };
+    requestAnimationFrame(animate);
+  }, [remoteSpinTarget]);
 
   // Sync state when other player spins - just update the display
   useEffect(() => {
@@ -76,11 +113,15 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, myNumber, curren
     setSpinning(true);
     setLandedIndex(null);
     setShowResult(false);
-    
+
     // Random spin - this determines the result
     const randomDegrees = Math.random() * 360;
     const extraRotations = 4 * 360;
     const totalRotation = extraRotations + randomDegrees;
+
+    // Broadcast target rotation so the other player can mirror the animation
+    const targetDisplayRotation = ((rotation + randomDegrees) % 360 + 360) % 360;
+    onSpinBroadcast?.(targetDisplayRotation);
     const duration = 4000;
     const start = performance.now();
     const startRotation = rotation;
@@ -147,7 +188,7 @@ export function Wheel({ teams, currentTeamId, isMyTurn, gameId, myNumber, curren
             ? "Spinning…"
             : "Waiting for your turn..."}
       </p>
-      <div className="relative mx-auto w-full max-w-xl aspect-square">
+      <div className={`relative mx-auto w-full max-w-xl aspect-square transition-[filter] duration-300 ${!isActiveTurn ? "grayscale" : ""}`}>
         <div
           className="absolute inset-0 rounded-full border-4 border-orange-500 overflow-hidden"
           style={{ transform: "rotate(0deg)" }}

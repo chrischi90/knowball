@@ -328,7 +328,7 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between mb-4 pt-2">
           <span className="text-zinc-400 text-sm">Solo Draft</span>
-          <span className="font-funnel-display text-white text-lg font-medium">Knowball</span>
+          <button type="button" onClick={() => router.push("/")} className="font-funnel-display text-white text-lg font-medium hover:text-zinc-300 transition">Knowball</button>
         </div>
 
         {/* Your Roster — always visible */}

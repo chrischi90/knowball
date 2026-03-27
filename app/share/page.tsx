@@ -59,9 +59,9 @@ export default function SharePage({ searchParams }: Props) {
     <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-sm space-y-5">
         {/* Brand */}
-        <p className="font-funnel-display text-orange-500 text-2xl font-bold text-center tracking-wide">
+        <Link href="/" className="font-funnel-display text-orange-500 text-2xl font-bold text-center tracking-wide hover:text-orange-400 transition block">
           Knowball
-        </p>
+        </Link>
 
         {parsed?.mode === "solo" && (
           <>

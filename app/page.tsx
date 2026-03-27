@@ -104,14 +104,18 @@ export default function LobbyPage() {
             >
               Basketball
             </button>
-            <button
-              type="button"
-              disabled
-              title="Coming soon"
-              className="relative z-10 flex-1 py-1.5 px-4 text-sm font-medium text-zinc-500 cursor-not-allowed"
-            >
-              Football
-            </button>
+            <div className="group relative z-10 flex-1">
+              <button
+                type="button"
+                disabled
+                className="w-full py-1.5 px-4 text-sm font-medium text-zinc-500 cursor-not-allowed group-hover:opacity-0 transition-opacity"
+              >
+                Football
+              </button>
+              <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs font-semibold text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                🚧 Coming Soon! 🚧
+              </span>
+            </div>
           </div>
         </div>
 
