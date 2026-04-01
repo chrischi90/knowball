@@ -10,6 +10,8 @@ const {
   pickPlayer,
   setSimulationResult,
   rematchGame,
+  deleteGame,
+  getGameCount,
   POSITIONS,
 } = require("./game-store.js");
 
@@ -114,9 +116,99 @@ function broadcastGameState(io, gameId, game) {
   }
 }
 
+// ─── Rate Limiting ────────────────────────────────────────────────────────────
+// Per-socket sliding-window counters. Cleaned up on disconnect.
+const _rateLimitState = new Map(); // socketId → { event → timestamp[] }
+
+const RATE_LIMITS = {
+  create_game:       { max: 3,  windowMs: 60_000 },
+  join_game:         { max: 10, windowMs: 60_000 },
+  spin:              { max: 30, windowMs: 60_000 },
+  pick:              { max: 30, windowMs: 60_000 },
+  simulation_result: { max: 5,  windowMs: 60_000 },
+};
+
+function checkRateLimit(socketId, event) {
+  const config = RATE_LIMITS[event];
+  if (!config) return true;
+  const now = Date.now();
+  if (!_rateLimitState.has(socketId)) _rateLimitState.set(socketId, {});
+  const state = _rateLimitState.get(socketId);
+  if (!state[event]) state[event] = [];
+  state[event] = state[event].filter((t) => now - t < config.windowMs);
+  if (state[event].length >= config.max) return false;
+  state[event].push(now);
+  return true;
+}
+
+// ─── Game Cleanup Timers ──────────────────────────────────────────────────────
+// Games are in-memory only; without cleanup they accumulate until OOM crash.
+const _cleanupTimers = new Map(); // gameId → NodeJS.Timeout
+
+const CLEANUP_DELAYS = {
+  lobby:     15 * 60 * 1000,  // 15 min: lobby that never had both players
+  inactive:  60 * 60 * 1000,  // 1 hour: mid-game but all sockets gone
+  completed: 30 * 60 * 1000,  // 30 min: finished game
+};
+
+function scheduleGameCleanup(gameId, delayMs) {
+  if (_cleanupTimers.has(gameId)) clearTimeout(_cleanupTimers.get(gameId));
+  const timer = setTimeout(() => {
+    deleteGame(gameId);
+    reconnectTokens.delete(gameId);
+    _cleanupTimers.delete(gameId);
+    console.log(JSON.stringify({ ts: new Date().toISOString(), level: "INFO", event: "game_purged", gameId, activeGames: getGameCount() }));
+  }, delayMs);
+  _cleanupTimers.set(gameId, timer);
+}
+
+function cancelGameCleanup(gameId) {
+  if (_cleanupTimers.has(gameId)) {
+    clearTimeout(_cleanupTimers.get(gameId));
+    _cleanupTimers.delete(gameId);
+  }
+}
+
+// ─── Input Validators ─────────────────────────────────────────────────────────
+function isValidString(s, maxLen) {
+  return typeof s === "string" && s.length > 0 && s.length <= maxLen;
+}
+
+function isValidPlayerId(id) {
+  return isValidString(id, 100);
+}
+
+function isValidGameId(gameId) {
+  return typeof gameId === "string" && /^[A-Z0-9]{8}$/.test(gameId);
+}
+
+function isValidPlayerNumber(playerNumber) {
+  return playerNumber === 1 || playerNumber === 2;
+}
+
+// Serialize mutating actions per game to prevent race windows (e.g. double pick)
+const _gameActionLocks = new Map(); // gameId -> Promise
+
+function withGameActionLock(gameId, action) {
+  const previous = _gameActionLocks.get(gameId) || Promise.resolve();
+  const next = previous
+    .catch(() => undefined)
+    .then(() => action());
+  _gameActionLocks.set(gameId, next.finally(() => {
+    if (_gameActionLocks.get(gameId) === next) {
+      _gameActionLocks.delete(gameId);
+    }
+  }));
+  return next;
+}
+
 function registerSocketHandlers(io) {
   io.on("connection", (socket) => {
     socket.on("create_game", (callback) => {
+      if (!checkRateLimit(socket.id, "create_game")) {
+        if (typeof callback === "function") callback({ error: "Too many requests" });
+        return;
+      }
       try {
         leaveOtherGameRooms(socket);
         const game = createGame();
@@ -125,6 +217,8 @@ function registerSocketHandlers(io) {
         const reconnectToken = rotateReconnectToken(game.gameId, 1);
         socket.data.playerNumber = 1;
         socket.data.gameId = game.gameId;
+        // Purge this lobby if player 2 never joins
+        scheduleGameCleanup(game.gameId, CLEANUP_DELAYS.lobby);
         if (typeof callback === "function")
           callback({
             gameId: game.gameId,
@@ -163,6 +257,14 @@ function registerSocketHandlers(io) {
     });
 
     socket.on("join_game", ({ gameId, claimPlayerNumber, claimReconnectToken }, callback) => {
+      if (!checkRateLimit(socket.id, "join_game")) {
+        if (typeof callback === "function") callback({ error: "Too many requests" });
+        return;
+      }
+      if (!isValidGameId(gameId)) {
+        if (typeof callback === "function") callback({ error: "Invalid game ID" });
+        return;
+      }
       try {
         const game = getGame(gameId);
         if (!game) {
@@ -222,6 +324,8 @@ function registerSocketHandlers(io) {
         const reconnectToken = rotateReconnectToken(gameId, playerNumber);
         socket.data.playerNumber = playerNumber;
         socket.data.gameId = gameId;
+        // Both players present — cancel any pending lobby-abandon cleanup
+        cancelGameCleanup(gameId);
         if (typeof callback === "function")
           callback({ game, playerNumber, reconnectToken });
         broadcastGameState(io, gameId, updated);
@@ -232,6 +336,10 @@ function registerSocketHandlers(io) {
     });
 
     socket.on("set_game_mode", ({ gameId, gameMode }, callback) => {
+      if (!isValidGameId(gameId)) {
+        if (typeof callback === "function") callback({ error: "Invalid game ID" });
+        return;
+      }
       const game = getGame(gameId);
       if (!game || game.phase !== "lobby") {
         if (typeof callback === "function")
@@ -258,6 +366,14 @@ function registerSocketHandlers(io) {
     });
 
     socket.on("set_first_drafter", ({ gameId, playerNumber }, callback) => {
+      if (!isValidGameId(gameId)) {
+        if (typeof callback === "function") callback({ error: "Invalid game ID" });
+        return;
+      }
+      if (!isValidPlayerNumber(playerNumber)) {
+        if (typeof callback === "function") callback({ error: "Invalid player number" });
+        return;
+      }
       const game = getGame(gameId);
       if (!game || game.phase !== "lobby") {
         if (typeof callback === "function")
@@ -287,6 +403,10 @@ function registerSocketHandlers(io) {
       const cb = typeof payload === "function" ? payload : callback;
       const payloadGameId =
         payload && typeof payload === "object" ? payload.gameId : null;
+      if (payloadGameId && !isValidGameId(payloadGameId)) {
+        if (typeof cb === "function") cb({ error: "Invalid game ID" });
+        return;
+      }
       const ctx = resolveGameForAction(socket, payloadGameId, cb);
       if (!ctx) return;
       const { gameId, game, pn } = ctx;
@@ -304,8 +424,16 @@ function registerSocketHandlers(io) {
     });
 
     socket.on("spin", (result, callback) => {
+      if (!checkRateLimit(socket.id, "spin")) {
+        if (typeof callback === "function") callback({ error: "Too many requests" });
+        return;
+      }
       const payloadGameId =
         result && typeof result === "object" ? result.gameId : null;
+      if (payloadGameId && !isValidGameId(payloadGameId)) {
+        if (typeof callback === "function") callback({ error: "Invalid game ID" });
+        return;
+      }
       const ctx = resolveGameForAction(socket, payloadGameId, callback);
       if (!ctx) return;
       const { gameId, game, pn } = ctx;
@@ -321,7 +449,7 @@ function registerSocketHandlers(io) {
       }
       // Client sends the result from the wheel spin
       const { teamId, teamName } = result;
-      if (!teamId || !teamName) {
+      if (!isValidString(teamId, 50) || !isValidString(teamName, 100)) {
         if (typeof callback === "function")
           callback({ error: "Invalid spin result" });
         return;
@@ -347,6 +475,10 @@ function registerSocketHandlers(io) {
     socket.on("respin", (payload, callback) => {
       const payloadGameId =
         payload && typeof payload === "object" ? payload.gameId : null;
+      if (payloadGameId && !isValidGameId(payloadGameId)) {
+        if (typeof callback === "function") callback({ error: "Invalid game ID" });
+        return;
+      }
       const ctx = resolveGameForAction(socket, payloadGameId, callback);
       if (!ctx) return;
       const { gameId, game, pn } = ctx;
@@ -365,6 +497,7 @@ function registerSocketHandlers(io) {
     });
 
     socket.on("cache_teams", ({ gameId, teams }) => {
+      if (!isValidGameId(gameId) || !Array.isArray(teams)) return;
       const game = getGame(gameId);
       if (game) game._teamsCache = teams;
     });
@@ -372,6 +505,10 @@ function registerSocketHandlers(io) {
     socket.on(
       "pick",
       (payload, callback) => {
+        if (!checkRateLimit(socket.id, "pick")) {
+          if (typeof callback === "function") callback({ error: "Too many requests" });
+          return;
+        }
         const {
           playerId,
           playerName,
@@ -380,12 +517,16 @@ function registerSocketHandlers(io) {
           naturalPosition,
           gameId: payloadGameId,
         } = payload || {};
-        const ctx = resolveGameForAction(socket, payloadGameId, callback);
-        if (!ctx) return;
-        const { gameId, game, pn } = ctx;
-        if (!game || game.phase !== "drafting" || game.currentTurn !== pn) {
-          if (typeof callback === "function")
-            callback({ error: "Not your turn" });
+        if (payloadGameId && !isValidGameId(payloadGameId)) {
+          if (typeof callback === "function") callback({ error: "Invalid game ID" });
+          return;
+        }
+        if (!isValidPlayerId(playerId)) {
+          if (typeof callback === "function") callback({ error: "Invalid playerId" });
+          return;
+        }
+        if (!isValidString(playerName, 100)) {
+          if (typeof callback === "function") callback({ error: "Invalid playerName" });
           return;
         }
         if (!POSITIONS.includes(position)) {
@@ -393,28 +534,62 @@ function registerSocketHandlers(io) {
             callback({ error: "Invalid position" });
           return;
         }
-        const updated = pickPlayer(
-          gameId,
-          pn,
-          playerId,
-          playerName,
-          position,
-          teamId,
-          naturalPosition
-        );
-        if (!updated) {
-          if (typeof callback === "function")
-            callback({ error: "Invalid pick (player taken or slot filled)" });
+        const gameId = payloadGameId || socket.data.gameId || null;
+        if (!isValidGameId(gameId)) {
+          if (typeof callback === "function") callback({ error: "Missing game context" });
           return;
         }
-        if (typeof callback === "function") callback({ game: updated });
-        broadcastGameState(io, gameId, updated);
+
+        withGameActionLock(gameId, async () => {
+          const game = getGame(gameId);
+          if (!game) {
+            if (typeof callback === "function") callback({ error: "Game not found" });
+            return;
+          }
+          if (!socket.rooms.has(gameId)) {
+            if (typeof callback === "function") callback({ error: "Not in this game" });
+            return;
+          }
+          const pn = getPlayerNum(socket, game);
+          if (!pn) {
+            if (typeof callback === "function") {
+              callback({ error: "Player identity mismatch. Rejoin this game." });
+            }
+            return;
+          }
+          if (game.phase !== "drafting" || game.currentTurn !== pn) {
+            if (typeof callback === "function") callback({ error: "Not your turn" });
+            return;
+          }
+
+          const updated = pickPlayer(
+            gameId,
+            pn,
+            playerId,
+            playerName,
+            position,
+            teamId,
+            naturalPosition
+          );
+          if (!updated) {
+            if (typeof callback === "function") {
+              callback({ error: "Invalid pick (player taken or slot filled)" });
+            }
+            return;
+          }
+          if (typeof callback === "function") callback({ game: updated });
+          broadcastGameState(io, gameId, updated);
+        }).catch((err) => {
+          if (typeof callback === "function") {
+            callback({ error: err?.message || "Failed to process pick" });
+          }
+        });
       }
     );
 
     socket.on("leave_game", ({ gameId }, callback) => {
       const targetGameId =
-        typeof gameId === "string" && gameId.length === 8
+        isValidGameId(gameId)
           ? gameId
           : socket.data.gameId;
       if (targetGameId && socket.rooms.has(targetGameId)) {
@@ -428,23 +603,36 @@ function registerSocketHandlers(io) {
     });
 
     socket.on("simulation_started", ({ gameId }) => {
+      if (!isValidGameId(gameId)) return;
       io.to(gameId).emit("simulation_started");
     });
 
     socket.on("simulation_result", ({ gameId, result }) => {
+      if (!checkRateLimit(socket.id, "simulation_result")) return;
+      if (!isValidGameId(gameId)) return;
       const game = getGame(gameId);
       if (!game) return;
       const updated = setSimulationResult(gameId, result);
-      if (updated) broadcastGameState(io, gameId, updated);
+      if (updated) {
+        broadcastGameState(io, gameId, updated);
+        // Schedule cleanup of the finished game
+        scheduleGameCleanup(gameId, CLEANUP_DELAYS.completed);
+      }
     });
 
     socket.on("rematch", ({ gameId }, callback) => {
+      if (!isValidGameId(gameId)) {
+        if (typeof callback === "function") callback({ error: "Invalid game ID" });
+        return;
+      }
       const game = getGame(gameId);
       if (!game) {
         if (typeof callback === "function")
           callback({ error: "Game not found" });
         return;
       }
+      // Cancel any pending cleanup so the rematch isn't purged mid-game
+      cancelGameCleanup(gameId);
       const updated = rematchGame(gameId);
       if (!updated) {
         if (typeof callback === "function")
@@ -472,6 +660,27 @@ function registerSocketHandlers(io) {
       }
       if (typeof callback === "function") callback({ game: updated });
       broadcastGameState(io, gameId, updated);
+    });
+
+    // ── Disconnect: clean up rate-limit state; schedule game purge if room empty ──
+    socket.on("disconnect", () => {
+      _rateLimitState.delete(socket.id);
+      const gameId = socket.data.gameId;
+      if (!gameId) return;
+      const game = getGame(gameId);
+      if (!game) return;
+      // Give socket.io a tick to update the room membership before checking
+      setImmediate(() => {
+        const room = io.sockets.adapter.rooms.get(gameId);
+        const stillOccupied = room && room.size > 0;
+        if (!stillOccupied) {
+          const delay =
+            game.phase === "completed" ? CLEANUP_DELAYS.completed :
+            game.phase === "lobby"     ? CLEANUP_DELAYS.lobby :
+                                         CLEANUP_DELAYS.inactive;
+          scheduleGameCleanup(gameId, delay);
+        }
+      });
     });
   });
 }

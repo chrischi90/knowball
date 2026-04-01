@@ -15,7 +15,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("nba_service")
 
 import psycopg2
-from fastapi import FastAPI, HTTPException
+import psycopg2.pool
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # basketball_reference_web_scraper — primary stats source
@@ -53,20 +55,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# DB connection — reconnects automatically on idle timeout (Neon free tier: 5 min)
-_conn = None
+# DB connection pool — ThreadedConnectionPool is thread-safe and handles
+# Neon's 5-min idle timeout by reconnecting as needed.
+_pool = None
+_pool_lock = threading.Lock()
+
+MIN_CONN = 1
+MAX_CONN = 5
+
+
+def get_pool():
+    global _pool
+    if _pool is not None:
+        return _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = psycopg2.pool.ThreadedConnectionPool(
+                MIN_CONN, MAX_CONN, os.environ["DATABASE_URL"]
+            )
+    return _pool
 
 
 def get_db():
-    global _conn
+    """Return a pooled connection; automatically reconnects if the pool is closed."""
+    pool = get_pool()
     try:
-        if _conn is None or _conn.closed:
-            raise Exception("no connection")
-        with _conn.cursor() as cur:
-            cur.execute("SELECT 1")
+        conn = pool.getconn()
+        # Verify the connection is alive (Neon idle timeout recovery)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        except Exception:
+            conn = psycopg2.connect(os.environ["DATABASE_URL"])
+        return conn
+    except psycopg2.pool.PoolError:
+        # Pool exhausted — fall back to a fresh direct connection
+        logger.warning("DB pool exhausted, opening direct connection")
+        return psycopg2.connect(os.environ["DATABASE_URL"])
+
+
+def release_db(conn):
+    """Return a connection to the pool (or close it if not pooled)."""
+    try:
+        pool = get_pool()
+        pool.putconn(conn)
     except Exception:
-        _conn = psycopg2.connect(os.environ["DATABASE_URL"])
-    return _conn
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # In-memory cache for teams (populated from DB on first request)
@@ -79,9 +116,12 @@ def get_teams_list() -> list[dict]:
     if _teams_cache is not None:
         return _teams_cache
     conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute("SELECT id, full_name, abbreviation, nickname, city FROM teams ORDER BY full_name")
-        rows = cur.fetchall()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, full_name, abbreviation, nickname, city FROM teams ORDER BY full_name")
+            rows = cur.fetchall()
+    finally:
+        release_db(conn)
     _teams_cache = [
         {"id": r[0], "full_name": r[1], "abbreviation": r[2], "nickname": r[3], "city": r[4]}
         for r in rows
@@ -105,6 +145,7 @@ def list_team_players(team_id: str, active_only: bool = False):
     - active_only=True: current season (2025-26) only.
     - active_only=False: all seeded seasons, deduplicated (most recent position wins).
     """
+    conn = None
     try:
         conn = get_db()
         with conn.cursor() as cur:
@@ -144,6 +185,9 @@ def list_team_players(team_id: str, active_only: bool = False):
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
+    finally:
+        if conn is not None:
+            release_db(conn)
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +311,7 @@ def _get_player_team_seasons(player_id: str, team_id: str) -> list[int]:
     Return list of season_end_years for which player_id was on team_id in our DB.
     Season strings like '2025-26' are converted to end year 2026.
     """
+    conn = None
     try:
         conn = get_db()
         with conn.cursor() as cur:
@@ -287,6 +332,9 @@ def _get_player_team_seasons(player_id: str, team_id: str) -> list[int]:
     except Exception as exc:
         logger.warning("_get_player_team_seasons failed for player=%s team=%s: %s", player_id, team_id, exc)
         return []
+    finally:
+        if conn is not None:
+            release_db(conn)
 
 
 def _query_seeded_stats_rows(
@@ -295,6 +343,7 @@ def _query_seeded_stats_rows(
     season_filter: Optional[str] = None,
 ) -> list[tuple]:
     """Read raw player season stat rows from Postgres."""
+    conn = None
     try:
         conn = get_db()
         clauses = ["player_id = %s"]
@@ -329,6 +378,9 @@ def _query_seeded_stats_rows(
             exc,
         )
         return []
+    finally:
+        if conn is not None:
+            release_db(conn)
 
 
 def _aggregate_seeded_stats(rows: list[tuple], min_gp: int) -> Optional[dict]:
@@ -592,6 +644,7 @@ def _get_player_stats(
 
 @app.get("/players/{player_id}/stats")
 def get_player_stats(
+    request: Request,
     player_id: str,
     team_id: Optional[str] = None,
     player_name: Optional[str] = None,
@@ -604,6 +657,9 @@ def get_player_stats(
     - game_mode=all_time: career stats scoped to team_id tenure
     Pass player_name (display form OK, e.g. 'Stephen Curry (GSW)') to enable BR fallback path.
     """
+    request_id = request.headers.get("x-request-id")
+    if request_id:
+        logger.info("player_stats request_id=%s player_id=%s team_id=%s mode=%s", request_id, player_id, team_id, game_mode)
     result = _get_player_stats(player_id, team_id, player_name, game_mode)
     if result is None:
         raise HTTPException(status_code=404, detail="Player stats not found")
@@ -612,4 +668,18 @@ def get_player_stats(
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    """Health check with live DB probe. Returns 503 if database is unreachable."""
+    db_ok = False
+    conn = None
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        db_ok = True
+    except Exception:
+        pass
+    finally:
+        if conn is not None:
+            release_db(conn)
+    status = "ok" if db_ok else "degraded"
+    return JSONResponse({"status": status, "db": db_ok}, status_code=200 if db_ok else 503)
