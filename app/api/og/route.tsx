@@ -14,6 +14,31 @@ const RED = "#f87171";
 const MUTED = "#71717a";
 const WHITE = "#ffffff";
 
+type OgFont = {
+  name: string;
+  data: ArrayBuffer;
+  weight: 400 | 500 | 600 | 700;
+  style: "normal";
+};
+
+async function loadGoogleFont(family: string, weight: 400 | 500 | 600 | 700): Promise<ArrayBuffer | null> {
+  const cssUrl = `https://fonts.googleapis.com/css2?family=${family}:wght@${weight}&display=swap`;
+  const cssResponse = await fetch(cssUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+    },
+  });
+
+  if (!cssResponse.ok) return null;
+  const css = await cssResponse.text();
+  const match = css.match(/src: url\(([^)]+)\) format\('(opentype|truetype|woff2)'\)/);
+  if (!match?.[1]) return null;
+
+  const fontResponse = await fetch(match[1]);
+  if (!fontResponse.ok) return null;
+  return fontResponse.arrayBuffer();
+}
+
 function playoffColor(r: string | null): string {
   if (!r) return MUTED;
   if (r === "Champion") return "#facc15";
@@ -32,9 +57,30 @@ function playoffLabel(r: string | null): string {
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const d = searchParams.get("d");
-  const mode = searchParams.get("mode");
+  const origin = req.nextUrl.origin;
+  const logoUrl = `${origin}/KnowballHero.gif`;
 
-  if (!d || !mode) {
+  const [funnelDisplay, funnelSansRegular, funnelSansSemiBold] = await Promise.all([
+    loadGoogleFont("Funnel+Display", 700),
+    loadGoogleFont("Funnel+Sans", 400),
+    loadGoogleFont("Funnel+Sans", 600),
+  ]);
+
+  const fonts: OgFont[] = [
+    funnelDisplay
+      ? { name: "Funnel Display", data: funnelDisplay, weight: 700, style: "normal" }
+      : null,
+    funnelSansRegular
+      ? { name: "Funnel Sans", data: funnelSansRegular, weight: 400, style: "normal" }
+      : null,
+    funnelSansSemiBold
+      ? { name: "Funnel Sans", data: funnelSansSemiBold, weight: 600, style: "normal" }
+      : null,
+  ].filter((font): font is OgFont => font !== null);
+
+  const imageOptions = { width: 1200, height: 630, fonts };
+
+  if (!d) {
     return new ImageResponse(
       (
         <div
@@ -45,14 +91,24 @@ export async function GET(req: NextRequest) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            fontFamily: "Funnel Sans",
           }}
         >
-          <span style={{ color: ORANGE, fontSize: "48px", fontWeight: 700 }}>
-            Knowball
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+            <img
+              src={logoUrl}
+              alt="Knowball"
+              width={44}
+              height={44}
+              style={{ borderRadius: "8px", objectFit: "cover" }}
+            />
+            <span style={{ color: ORANGE, fontFamily: "Funnel Display", fontSize: "48px", fontWeight: 700 }}>
+              Knowball
+            </span>
+          </div>
         </div>
       ),
-      { width: 1200, height: 630 }
+      imageOptions
     );
   }
 
@@ -69,14 +125,24 @@ export async function GET(req: NextRequest) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            fontFamily: "Funnel Sans",
           }}
         >
-          <span style={{ color: ORANGE, fontSize: "48px", fontWeight: 700 }}>
-            Knowball
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+            <img
+              src={logoUrl}
+              alt="Knowball"
+              width={44}
+              height={44}
+              style={{ borderRadius: "8px", objectFit: "cover" }}
+            />
+            <span style={{ color: ORANGE, fontFamily: "Funnel Display", fontSize: "48px", fontWeight: 700 }}>
+              Knowball
+            </span>
+          </div>
         </div>
       ),
-      { width: 1200, height: 630 }
+      imageOptions
     );
   }
 
@@ -100,14 +166,28 @@ export async function GET(req: NextRequest) {
             display: "flex",
             flexDirection: "column",
             padding: "56px 64px",
-            fontFamily: "sans-serif",
+            fontFamily: "Funnel Sans",
           }}
         >
           {/* Header */}
           <div style={{ display: "flex", alignItems: "center", marginBottom: "40px" }}>
-            <span style={{ fontSize: "20px", marginRight: "12px" }}>🏀</span>
-            <span style={{ color: ORANGE, fontSize: "28px", fontWeight: 700, letterSpacing: "0.05em" }}>
-              KNOWBALL
+            <img
+              src={logoUrl}
+              alt="Knowball"
+              width={34}
+              height={34}
+              style={{ borderRadius: "8px", marginRight: "12px", objectFit: "cover" }}
+            />
+            <span
+              style={{
+                color: ORANGE,
+                fontFamily: "Funnel Display",
+                fontSize: "32px",
+                fontWeight: 700,
+                letterSpacing: "0.01em",
+              }}
+            >
+              Knowball
             </span>
           </div>
 
@@ -228,11 +308,11 @@ export async function GET(req: NextRequest) {
 
           {/* Footer */}
           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "24px" }}>
-            <span style={{ color: MUTED, fontSize: "16px" }}>knowball.onrender.com</span>
+            <span style={{ color: MUTED, fontSize: "16px" }}>knowball.gg</span>
           </div>
         </div>
       ),
-      { width: 1200, height: 630 }
+      imageOptions
     );
   }
 
@@ -249,14 +329,28 @@ export async function GET(req: NextRequest) {
           display: "flex",
           flexDirection: "column",
           padding: "48px 64px",
-          fontFamily: "sans-serif",
+          fontFamily: "Funnel Sans",
         }}
       >
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", marginBottom: "32px" }}>
-          <span style={{ fontSize: "20px", marginRight: "12px" }}>🏀</span>
-          <span style={{ color: ORANGE, fontSize: "28px", fontWeight: 700, letterSpacing: "0.05em" }}>
-            KNOWBALL
+          <img
+            src={logoUrl}
+            alt="Knowball"
+            width={34}
+            height={34}
+            style={{ borderRadius: "8px", marginRight: "12px", objectFit: "cover" }}
+          />
+          <span
+            style={{
+              color: ORANGE,
+              fontFamily: "Funnel Display",
+              fontSize: "32px",
+              fontWeight: 700,
+              letterSpacing: "0.01em",
+            }}
+          >
+            Knowball
           </span>
           <span style={{ color: MUTED, fontSize: "18px", marginLeft: "16px" }}>2-Player Matchup</span>
         </div>
@@ -341,10 +435,10 @@ export async function GET(req: NextRequest) {
 
         {/* Footer */}
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "20px" }}>
-          <span style={{ color: MUTED, fontSize: "14px" }}>knowball.onrender.com</span>
+          <span style={{ color: MUTED, fontSize: "14px" }}>knowball.gg</span>
         </div>
       </div>
     ),
-    { width: 1200, height: 630 }
+    imageOptions
   );
 }

@@ -1,8 +1,14 @@
 import type { Roster } from "@/lib/game-types";
 import { POSITIONS } from "@/lib/game-types";
 
-const BASE_URL =
-  process.env.NEXT_PUBLIC_BASE_URL ?? "https://knowball.onrender.com";
+const PROD_BASE_URL = "https://knowball.gg";
+const SHARE_BASE_URL = (
+  process.env.NEXT_PUBLIC_SHARE_BASE_URL ?? PROD_BASE_URL
+).replace(/\/$/, "");
+
+function resolveBaseUrl(): string {
+  return SHARE_BASE_URL;
+}
 
 export type SoloShareData = {
   pg: string;
@@ -28,22 +34,58 @@ export type ShareData =
   | { mode: "2p"; data: TwoPlayerShareData };
 
 function encodeData(obj: unknown): string {
-  return btoa(JSON.stringify(obj))
+  const json = JSON.stringify(obj);
+
+  // Encode JSON as UTF-8 before base64 to support non-Latin1 characters.
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(json, "utf8")
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=/g, "");
+  }
+
+  const bytes = new TextEncoder().encode(json);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+
+  return btoa(binary)
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=/g, "");
 }
 
-export function decodeShareData(d: string): ShareData | null {
+function decodeData(d: string): unknown | null {
   try {
-    const base64 = d.replace(/-/g, "+").replace(/_/g, "/");
-    const parsed = JSON.parse(atob(base64));
-    if ("pg" in parsed) return { mode: "solo", data: parsed as SoloShareData };
-    if ("p1" in parsed) return { mode: "2p", data: parsed as TwoPlayerShareData };
-    return null;
+    const base64Url = d.replace(/-/g, "+").replace(/_/g, "/");
+    const padding = (4 - (base64Url.length % 4)) % 4;
+    const base64 = `${base64Url}${"=".repeat(padding)}`;
+
+    if (typeof Buffer !== "undefined") {
+      return JSON.parse(Buffer.from(base64, "base64").toString("utf8"));
+    }
+
+    const binary = atob(base64);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const json = new TextDecoder().decode(bytes);
+    return JSON.parse(json);
   } catch {
     return null;
   }
+}
+
+export function decodeShareData(d: string): ShareData | null {
+  const parsed = decodeData(d);
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+
+  if ("pg" in parsed) return { mode: "solo", data: parsed as SoloShareData };
+  if ("p1" in parsed) return { mode: "2p", data: parsed as TwoPlayerShareData };
+  return null;
 }
 
 export function encodeSoloShareData(
@@ -79,5 +121,5 @@ export function encode2PShareData(
 }
 
 export function buildShareUrl(mode: "solo" | "2p", encodedData: string): string {
-  return `${BASE_URL}/share?mode=${mode}&d=${encodedData}`;
+  return `${resolveBaseUrl()}/share?mode=${mode}&d=${encodedData}`;
 }
