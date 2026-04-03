@@ -49,7 +49,12 @@ function encodeData(obj: unknown): string {
   let binary = "";
   const chunkSize = 0x8000;
   for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    const chunk = bytes.subarray(i, i + chunkSize);
+    let chunkBinary = "";
+    for (let j = 0; j < chunk.length; j++) {
+      chunkBinary += String.fromCharCode(chunk[j]);
+    }
+    binary += chunkBinary;
   }
 
   return btoa(binary)
