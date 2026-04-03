@@ -15,7 +15,7 @@ export default function RootLayout({
     <html lang="en">
       <body className="antialiased min-h-screen bg-black text-white flex flex-col">
         <div className="flex-1">{children}</div>
-        <footer className="fixed bottom-3 left-0 right-0 text-center text-xs text-gray-600">
+        <footer className="text-center text-xs text-gray-600 py-8">
           Created by:{" "}
           <a
             href="https://www.stevenchi.com"
@@ -25,7 +25,15 @@ export default function RootLayout({
           >
             Steven Chi
           </a>{" "}
-          &amp; Chris Chi
+          &amp;{" "}
+          <a
+            href="https://www.chrischi.me"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-gray-400 transition-colors"
+          >
+            Chris Chi
+          </a>
         </footer>
       </body>
     </html>

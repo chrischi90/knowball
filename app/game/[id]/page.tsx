@@ -406,7 +406,7 @@ export default function GamePage() {
                   Choose whether to draft from all players (including retired) or active players only.
                 </p>
                 <p className="text-zinc-400 text-sm mb-4 leading-relaxed">
-                  <span className="font-bold">NOTE:</span> In All-Time mode, a player&apos;s stats are based only on their time with the drafted team — not their full career.
+                  <span className="font-bold">NOTE:</span> In All-Time mode, a player&apos;s stats are based only on their time with the drafted team — not their full career. Players are only available from 1980-present.
                 </p>
                 <div className={`relative flex rounded-full border border-zinc-700 p-1 mb-6${myNumber !== 1 ? " opacity-70" : ""}`}>
                   <div className={`pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-orange-600 transition-transform duration-200 ease-in-out${(game.gameMode ?? "all_time") === "active_only" ? " translate-x-full" : ""}`} />
