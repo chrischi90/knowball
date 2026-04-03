@@ -148,6 +148,14 @@ function rematchGame(gameId) {
   return game;
 }
 
+function deleteGame(gameId) {
+  games.delete(gameId);
+}
+
+function getGameCount() {
+  return games.size;
+}
+
 module.exports = {
   createGame,
   getGame,
@@ -160,5 +168,7 @@ module.exports = {
   pickPlayer,
   setSimulationResult,
   rematchGame,
+  deleteGame,
+  getGameCount,
   POSITIONS,
 };

@@ -526,6 +526,10 @@ function randomCentered(): number {
   return Math.random() + Math.random() - 1;
 }
 
+function randomInt(minInclusive: number, maxInclusive: number): number {
+  return minInclusive + Math.floor(Math.random() * (maxInclusive - minInclusive + 1));
+}
+
 function round3(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
@@ -628,25 +632,26 @@ export function simulateHeadToHeadGame(
     ? clamp(team1WinProbabilityOverride, 0.05, 0.95)
     : winProbabilityFromRatings(team1Rating, team2Rating);
   const team2WinProbability = 1 - team1WinProbability;
-  const team1Wins = Math.random() < team1WinProbability;
 
-  const expectedTeam1 = 99 + (team1Rating - BASELINE_TEAM_RATING) * 0.45;
-  const expectedTeam2 = 99 + (team2Rating - BASELINE_TEAM_RATING) * 0.45;
+  // Score-first simulation: odds shape expected margin, then game noise is applied.
+  const ratingExpected1 = 99 + (team1Rating - BASELINE_TEAM_RATING) * 0.45;
+  const ratingExpected2 = 99 + (team2Rating - BASELINE_TEAM_RATING) * 0.45;
+  const oddsMarginShift = (team1WinProbability - 0.5) * 14;
+  const expectedTeam1 = ratingExpected1 + oddsMarginShift;
+  const expectedTeam2 = ratingExpected2 - oddsMarginShift;
 
-  let team1Score = Math.round(clamp(expectedTeam1 + randomCentered() * 10, 78, 165));
-  let team2Score = Math.round(clamp(expectedTeam2 + randomCentered() * 10, 78, 165));
+  const SCORE_NOISE = 6;
+  let team1Score = Math.round(clamp(expectedTeam1 + randomCentered() * SCORE_NOISE, 78, 165));
+  let team2Score = Math.round(clamp(expectedTeam2 + randomCentered() * SCORE_NOISE, 78, 165));
 
+  // Keep ties rare while giving a slight edge to the team with better odds.
   if (team1Score === team2Score) {
-    if (team1Wins) team1Score += 1;
-    else team2Score += 1;
+    const team1TieBreakerBias = clamp(0.5 + (team1WinProbability - 0.5) * 0.8, 0.2, 0.8);
+    if (Math.random() < team1TieBreakerBias) team1Score += randomInt(1, 2);
+    else team2Score += randomInt(1, 2);
   }
 
-  if (team1Wins && team1Score <= team2Score) {
-    team1Score = team2Score + 1 + Math.floor(Math.random() * 4);
-  }
-  if (!team1Wins && team2Score <= team1Score) {
-    team2Score = team1Score + 1 + Math.floor(Math.random() * 4);
-  }
+  const team1Wins = team1Score > team2Score;
 
   return {
     winner: team1Wins ? 1 : 2,

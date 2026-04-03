@@ -4,9 +4,20 @@
 const NBA_SERVICE_URL =
   process.env.NBA_SERVICE_URL || "http://localhost:8000";
 
-export async function fetchTeams(): Promise<{ teams: NBATeam[] }> {
+type FetchContext = {
+  requestId?: string;
+};
+
+function requestHeaders(ctx?: FetchContext): HeadersInit | undefined {
+  if (!ctx?.requestId) return undefined;
+  return { "x-request-id": ctx.requestId };
+}
+
+export async function fetchTeams(ctx?: FetchContext): Promise<{ teams: NBATeam[] }> {
   const res = await fetch(`${NBA_SERVICE_URL}/teams`, {
     next: { revalidate: 3600 },
+    signal: AbortSignal.timeout(10_000),
+    headers: requestHeaders(ctx),
   });
   if (!res.ok) throw new Error("Failed to fetch teams");
   return res.json();
@@ -14,13 +25,18 @@ export async function fetchTeams(): Promise<{ teams: NBATeam[] }> {
 
 export async function fetchTeamPlayers(
   teamId: string,
-  options?: { activeOnly?: boolean }
+  options?: { activeOnly?: boolean },
+  ctx?: FetchContext
 ): Promise<{ players: NBAPlayer[] }> {
   const params = new URLSearchParams();
   if (options?.activeOnly) params.set("active_only", "true");
   const qs = params.toString();
   const url = `${NBA_SERVICE_URL}/teams/${teamId}/players${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    next: { revalidate: 86400 },
+    signal: AbortSignal.timeout(10_000),
+    headers: requestHeaders(ctx),
+  });
   if (!res.ok) throw new Error("Failed to fetch team players");
   return res.json();
 }
@@ -29,7 +45,8 @@ export async function fetchPlayerStats(
   playerId: string,
   teamId?: string | null,
   playerName?: string | null,
-  gameMode?: string | null
+  gameMode?: string | null,
+  ctx?: FetchContext
 ): Promise<PlayerStats | null> {
   const params = new URLSearchParams();
   if (teamId) params.set("team_id", teamId);
@@ -37,7 +54,11 @@ export async function fetchPlayerStats(
   if (gameMode) params.set("game_mode", gameMode);
   const qs = params.toString();
   const url = `${NBA_SERVICE_URL}/players/${playerId}/stats${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    next: { revalidate: 604800 },
+    signal: AbortSignal.timeout(10_000),
+    headers: requestHeaders(ctx),
+  });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error("Failed to fetch player stats");
   return res.json();

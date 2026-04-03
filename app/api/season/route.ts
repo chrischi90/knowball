@@ -11,6 +11,7 @@ import {
 } from "@/lib/simulation-engine";
 
 type Body = { roster: Roster; gameMode?: string };
+const ALLOWED_GAME_MODES = new Set(["all_time", "active_only"]);
 
 const ROUND_NAMES = ["First Round", "Conference Semifinals", "Conference Finals", "NBA Finals"];
 const RECENT_BEST_TEAM_WIN_RATE = 68 / 82;
@@ -190,12 +191,24 @@ function simulateOtherConferenceChampion(): PlayoffTeam {
   return current[0];
 }
 
+// Cap concurrent season simulations (heavier than head-to-head) to prevent event-loop saturation
+let _activeSeasonSims = 0;
+const MAX_CONCURRENT_SEASON_SIMS = 10;
+
 export async function POST(req: Request) {
+  if (_activeSeasonSims >= MAX_CONCURRENT_SEASON_SIMS) {
+    return NextResponse.json({ error: "Server busy, please try again shortly" }, { status: 503 });
+  }
+  _activeSeasonSims++;
   try {
+    const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
     const body = (await req.json()) as Body;
     const { roster, gameMode } = body;
     if (!roster) {
       return NextResponse.json({ error: "roster required" }, { status: 400 });
+    }
+    if (gameMode && !ALLOWED_GAME_MODES.has(gameMode)) {
+      return NextResponse.json({ error: "Invalid gameMode" }, { status: 400 });
     }
 
     if (POSITIONS.filter((p) => roster[p].playerId).length !== 5) {
@@ -208,15 +221,20 @@ export async function POST(req: Request) {
         const slot = roster[p];
         if (!slot.playerId) return null;
 
+        if (!slot.teamId) {
+          return fetchPlayerStats(slot.playerId, null, slot.playerName, gameMode, { requestId }).catch(() => null);
+        }
+
         const teamScoped = await fetchPlayerStats(
           slot.playerId,
           slot.teamId,
           slot.playerName,
-          gameMode
+          gameMode,
+          { requestId }
         ).catch(() => null);
         if (teamScoped) return teamScoped;
 
-        return fetchPlayerStats(slot.playerId, null, slot.playerName, gameMode).catch(() => null);
+        return fetchPlayerStats(slot.playerId, null, slot.playerName, gameMode, { requestId }).catch(() => null);
       })
     );
 
@@ -376,5 +394,7 @@ export async function POST(req: Request) {
       { error: e instanceof Error ? e.message : "Season simulation failed" },
       { status: 500 }
     );
+  } finally {
+    _activeSeasonSims--;
   }
 }
