@@ -4,7 +4,8 @@ import { decodeShareData } from "@/lib/share-utils";
 import { POSITIONS } from "@/lib/game-types";
 
 const BASE_URL =
-  process.env.NEXT_PUBLIC_BASE_URL ?? "https://knowball.onrender.com";
+  process.env.NEXT_PUBLIC_SHARE_BASE_URL ?? "https://knowball.gg";
+const OG_IMAGE_VERSION = "brand-v2";
 
 const POSITIONS_ARRAY = [...POSITIONS] as string[];
 
@@ -14,19 +15,25 @@ type Props = {
 
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const { mode, d } = searchParams;
-  const ogImageUrl = `${BASE_URL}/api/og?mode=${mode ?? ""}&d=${d ?? ""}`;
+  const parsed = d ? decodeShareData(d) : null;
+  const resolvedMode = parsed?.mode ?? mode ?? "";
+  const ogImageUrl = new URL("/api/og", BASE_URL);
+  ogImageUrl.search = new URLSearchParams({
+    mode: resolvedMode,
+    d: d ?? "",
+    v: OG_IMAGE_VERSION,
+  }).toString();
 
   let title = "Knowball – NBA Draft Game";
   let description = "Can you beat my squad? Play Knowball!";
 
-  if (d) {
-    const parsed = decodeShareData(d);
-    if (parsed?.mode === "solo") {
+  if (parsed) {
+    if (parsed.mode === "solo") {
       const { w, l, r } = parsed.data;
       const result = r === "Champion" ? "NBA Champion" : r ?? "Missed Playoffs";
       title = `${w}–${l} | ${result} – Knowball`;
       description = `I drafted a squad and went ${w}–${l}. Can you beat it? Play Knowball!`;
-    } else if (parsed?.mode === "2p") {
+    } else if (parsed.mode === "2p") {
       const { s1, s2, winner } = parsed.data;
       const winText = winner === 1 ? "Player 1 Wins" : winner === 2 ? "Player 2 Wins" : "Tie Game";
       title = `${s1} vs ${s2} | ${winText} – Knowball`;
@@ -40,13 +47,13 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
     openGraph: {
       title,
       description,
-      images: [{ url: ogImageUrl, width: 1200, height: 630 }],
+      images: [{ url: ogImageUrl.toString(), width: 1200, height: 630 }],
     },
     twitter: {
       card: "summary_large_image",
       title,
       description,
-      images: [ogImageUrl],
+      images: [ogImageUrl.toString()],
     },
   };
 }
