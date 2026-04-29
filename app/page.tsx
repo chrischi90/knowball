@@ -147,7 +147,7 @@ export default function LobbyPage() {
                 type="text"
                 value={gameCode}
                 onChange={(e) => setGameCode(e.target.value.toUpperCase())}
-                placeholder="Game code"
+                 placeholder="Room code"
                 maxLength={8}
                 className="w-full py-2.5 px-4 rounded-lg bg-zinc-900 border border-zinc-700 text-center text-lg tracking-widest placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-orange-500"
               />
