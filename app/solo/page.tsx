@@ -237,14 +237,10 @@ export default function SoloPage() {
         )}
         <div className="max-w-lg mx-auto">
           <div className="flex items-center justify-between mb-4 pt-2">
-            <span className="text-zinc-400 text-sm">Solo Draft</span>
-            <button
-              type="button"
-              onClick={() => setShowLeaveModal(true)}
-              className="font-funnel-display text-white text-lg font-medium hover:text-zinc-300 transition"
-            >
+            <span className="font-funnel-display text-white text-lg font-medium">
               Knowball
-            </button>
+            </span>
+            <span className="text-zinc-400 text-sm">Solo Draft</span>
           </div>
 
           <div className="mb-6 rounded-lg bg-zinc-900 p-4">
@@ -270,6 +266,14 @@ export default function SoloPage() {
             className="w-full py-4 rounded-lg bg-green-600 hover:bg-green-500 font-funnel-display font-semibold text-xl transition"
           >
             Simulate Season
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowLeaveModal(true)}
+            className="w-full mt-3 py-3.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold transition"
+          >
+            Quit Game
           </button>
         </div>
       </main>
@@ -318,20 +322,16 @@ export default function SoloPage() {
       <div className="max-w-lg mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-4 pt-2">
-          {hasSpun ? (
-            <span className="rounded-full bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-300">
-              {gameMode === "all_time" ? "All-Time" : "Active Only"}
-            </span>
-          ) : (
-            <span />
-          )}
-          <button
-            type="button"
-            onClick={() => setShowLeaveModal(true)}
-            className="font-funnel-display text-white text-lg font-medium hover:text-zinc-300 transition"
-          >
+          <span className="font-funnel-display text-white text-lg font-medium">
             Knowball
-          </button>
+          </span>
+          <div className="flex items-center gap-2">
+            {hasSpun ? (
+              <span className="rounded-full bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-300">
+                {gameMode === "all_time" ? "All-Time" : "Active Only"}
+              </span>
+            ) : null}
+          </div>
         </div>
 
         {/* Game mode toggle — animates closed (upward drawer) once the user has spun */}
@@ -417,6 +417,14 @@ export default function SoloPage() {
         {error && (
           <p className="mt-4 text-red-400 text-sm text-center">{error}</p>
         )}
+
+        <button
+          type="button"
+          onClick={() => setShowLeaveModal(true)}
+          className="w-full mt-6 py-3.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold transition"
+        >
+          Quit Game
+        </button>
       </div>
     </main>
   );

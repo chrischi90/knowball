@@ -226,11 +226,12 @@ export default function GamePage() {
 
   const handleCopyCode = useCallback(async () => {
     if (!gameId) return;
+    const shareMessage = `Play against me at knowball.gg! Room code: ${gameId}`;
     try {
-      await navigator.clipboard.writeText(gameId);
+      await navigator.clipboard.writeText(shareMessage);
     } catch {
       const ta = document.createElement("textarea");
-      ta.value = gameId;
+      ta.value = shareMessage;
       ta.style.position = "fixed";
       ta.style.left = "-9999px";
       ta.style.top = "0";
@@ -341,6 +342,9 @@ export default function GamePage() {
       )}
       <div className="max-w-lg mx-auto">
         <div className="flex items-center justify-between mb-4">
+          <span className="font-funnel-display text-white text-lg font-medium text-left">
+            Knowball
+          </span>
           {game.phase !== "lobby" ? (
             <div className="flex items-center gap-2">
               <span className="rounded-full bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-300">
@@ -351,13 +355,6 @@ export default function GamePage() {
           ) : (
             <span className="text-zinc-400 text-sm">Game: {gameId}</span>
           )}
-          <button
-            type="button"
-            onClick={() => setShowLeaveModal(true)}
-            className="font-funnel-display text-white text-lg font-medium hover:text-zinc-300 transition text-left"
-          >
-            Knowball
-          </button>
         </div>
 
         {error && (
@@ -532,6 +529,16 @@ export default function GamePage() {
             onRematch={handleRematch}
           />
         )}
+
+        <div className="mt-6">
+          <button
+            type="button"
+            onClick={() => setShowLeaveModal(true)}
+            className="w-full py-3.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold transition"
+          >
+            Quit Game
+          </button>
+        </div>
       </div>
     </main>
   );
