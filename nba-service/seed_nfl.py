@@ -102,6 +102,10 @@ def normalize_position(raw: Optional[str]) -> Optional[str]:
     return None
 
 
+def _opt_int(v) -> Optional[int]:
+    return None if v is None else int(v)
+
+
 def franchise_id(abbr: str) -> str:
     return FRANCHISE_MAP.get(abbr, abbr)
 
@@ -207,6 +211,37 @@ def aggregate_player_weeks(rows: Iterable[dict]) -> Dict[Tuple[str, str, int], d
         for field, cols in STAT_FIELDS.items():
             agg[field] += sum(_num(r.get(c)) for c in cols)
     return out
+
+
+# Columns nflverse leaves empty (all zeros) in some seasons, e.g. targets 2003-2008 and
+# tackles for loss 2003-2011. Zeros there mean "not tracked", so they're stored as NULL.
+UNTRACKED_CANDIDATES = ["rec_tgt", "def_tackles", "def_sacks", "def_pass_defended",
+                        "def_forced_fumbles", "def_tfl"]
+
+
+def null_untracked_columns(totals: Dict[Tuple[str, str, int], dict], min_share: float = 0.05) -> Dict[int, List[str]]:
+    """
+    Mutates totals in place: for each season, any candidate column whose league-wide sum is
+    below min_share of that column's median season sum is set to None for every row.
+    Returns {season: [nulled columns]} for logging.
+    """
+    season_sums: Dict[int, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for (_pid, _tid, season), agg in totals.items():
+        for col in UNTRACKED_CANDIDATES:
+            season_sums[season][col] += agg.get(col) or 0.0
+    nulled: Dict[int, List[str]] = defaultdict(list)
+    for col in UNTRACKED_CANDIDATES:
+        sums = sorted(season_sums[s][col] for s in season_sums)
+        if not sums:
+            continue
+        median = sums[len(sums) // 2]
+        for season, by_col in season_sums.items():
+            if median > 0 and by_col[col] < min_share * median:
+                nulled[season].append(col)
+    for (_pid, _tid, season), agg in totals.items():
+        for col in nulled.get(season, []):
+            agg[col] = None
+    return dict(nulled)
 
 
 def aggregate_team_defense(
@@ -400,6 +435,8 @@ def seed(start: int, end: int, current_only: bool, skip_madden: bool) -> None:
     for s in position_seasons:
         rows = read_csv(download("stats_player", f"stats_player_week_{s}.csv", refresh=(s == end)))
         player_weeks.update(aggregate_player_weeks(rows))
+    for season, cols in sorted(null_untracked_columns(player_weeks).items()):
+        log.info("season %d: not tracked → NULL: %s", season, ", ".join(cols))
     team_weeks = {
         s: read_csv(download("stats_team", f"stats_team_week_{s}.csv", refresh=(s == end)))
         for s in seasons
@@ -478,9 +515,9 @@ def seed(start: int, end: int, current_only: bool, skip_madden: bool) -> None:
             int(a["pass_cmp"]), int(a["pass_att"]), int(a["pass_yds"]), int(a["pass_td"]),
             int(a["pass_int"]), int(a["pass_sacked"]),
             int(a["rush_att"]), int(a["rush_yds"]), int(a["rush_td"]), int(a["fumbles_lost"]),
-            int(a["rec_tgt"]), int(a["rec"]), int(a["rec_yds"]), int(a["rec_td"]),
-            int(a["def_tackles"]), float(a["def_sacks"]), int(a["def_int"]),
-            int(a["def_pass_defended"]), int(a["def_forced_fumbles"]), int(a["def_tfl"]),
+            _opt_int(a["rec_tgt"]), int(a["rec"]), int(a["rec_yds"]), int(a["rec_td"]),
+            _opt_int(a["def_tackles"]), (None if a["def_sacks"] is None else float(a["def_sacks"])), int(a["def_int"]),
+            _opt_int(a["def_pass_defended"]), _opt_int(a["def_forced_fumbles"]), _opt_int(a["def_tfl"]),
         ))
         if s != roster_season:  # current-season rosters come from the live roster file below
             hist_roster_rows.append((pid, tid, s, info[pid]["name"], pos, a["stat_position"], None))

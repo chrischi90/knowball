@@ -166,3 +166,23 @@ def test_current_season():
     assert s.current_season(dt.date(2026, 11, 9)) == 2026
     assert s.current_season(dt.date(2027, 2, 7)) == 2026
     assert s.current_season(dt.date(2027, 6, 1)) == 2027
+
+
+def test_null_untracked_columns_marks_empty_seasons():
+    def agg(tgt, tfl):
+        a = {c: 0.0 for c in s.STAT_FIELDS}
+        a.update(gp=16, rec=50.0, rec_tgt=tgt, def_tfl=tfl)
+        return a
+    totals = {
+        ("a", "KC", 2002): agg(80.0, 5.0),
+        ("a", "KC", 2004): agg(0.0, 0.0),   # targets + TFL not tracked
+        ("a", "KC", 2010): agg(85.0, 0.0),  # TFL not tracked
+        ("a", "KC", 2015): agg(90.0, 6.0),
+    }
+    nulled = s.null_untracked_columns(totals)
+    assert totals[("a", "KC", 2004)]["rec_tgt"] is None
+    assert totals[("a", "KC", 2004)]["def_tfl"] is None
+    assert totals[("a", "KC", 2010)]["rec_tgt"] == 85.0
+    assert totals[("a", "KC", 2010)]["def_tfl"] is None
+    assert totals[("a", "KC", 2015)]["def_tfl"] == 6.0
+    assert "rec_tgt" in nulled[2004] and 2015 not in nulled

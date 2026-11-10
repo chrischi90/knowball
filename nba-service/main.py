@@ -666,6 +666,12 @@ def get_player_stats(
     return result
 
 
+# NFL endpoints (/nfl/...) share the same DB pool.
+from nfl_router import create_nfl_router  # noqa: E402
+
+app.include_router(create_nfl_router(get_db, release_db))
+
+
 @app.get("/health")
 def health():
     """Health check with live DB probe. Returns 503 if database is unreachable."""
