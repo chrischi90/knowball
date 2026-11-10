@@ -138,6 +138,22 @@ def weighted_league_line(per_season: Dict[int, dict], weights: Dict[int, float])
     return out
 
 
+def league_per_game_from_rows(rows: List[dict], position: str) -> dict:
+    """Average qualifying starter's per-game values (by column) from one season's stat rows."""
+    rows = [r for r in rows if _qualifies(position, r)]
+    if not rows:
+        return {}
+    total = sum_rows(rows)
+    line: Dict[str, Optional[float]] = {}
+    for col in STAT_COLUMNS:
+        if col in ("gp", "gs"):
+            continue
+        v = total[col]
+        denom = total.get(f"_gp:{col}", total["gp"]) or total["gp"]
+        line[col] = None if v is None else v / denom
+    return line
+
+
 # ---------------------------------------------------------------------------
 # Rookie projection
 # ---------------------------------------------------------------------------
@@ -383,18 +399,7 @@ def create_nfl_router(get_db: Callable, release_db: Callable) -> APIRouter:
                 f"SELECT {cols} FROM nfl_player_season_stats WHERE season = %s AND position = ANY(%s)",
                 (season, group),
             )
-            rows = [r for r in rows if _qualifies(position, r)]
-            if not rows:
-                return {}
-            total = sum_rows(rows)
-            line: Dict[str, Optional[float]] = {}
-            for col in STAT_COLUMNS:
-                if col in ("gp", "gs"):
-                    continue
-                v = total[col]
-                denom = total.get(f"_gp:{col}", total["gp"]) or total["gp"]
-                line[col] = None if v is None else v / denom
-            return line
+            return league_per_game_from_rows(rows, position)
         return cached(f"league:{season}:{position}", load) or {}
 
     def league_line(position: str, weights: Dict[int, float]) -> dict:
@@ -471,6 +476,42 @@ def create_nfl_router(get_db: Callable, release_db: Callable) -> APIRouter:
         result = db_call(lambda: cached(key, lambda: build_stats(player_id, team_id, game_mode)))
         if result is None:
             raise HTTPException(status_code=404, detail="Player stats not found")
+        return result
+
+    # --- league (season-mode opponents, backtest) -------------------------------
+    @router.get("/league/teams")
+    def league_teams(season: Optional[int] = None):
+        """Every team's real record and scoring for a season (default: last completed)."""
+        ctx = season_context()
+        if season is None:
+            season = ctx["season"] if ctx["phase"] == "postseason" else ctx["season"] - 1
+
+        def load():
+            rows = query(
+                """
+                SELECT ts.team_id, ts.team_name, t.conference, t.division, ts.wins, ts.losses, ts.ties,
+                       ts.points_for, ts.points_against, ts.games
+                FROM nfl_team_seasons ts JOIN nfl_teams t ON t.id = ts.team_id
+                WHERE ts.season = %s AND ts.games > 0
+                ORDER BY ts.team_id
+                """,
+                (season,),
+            )
+            if not rows:
+                return None
+            games = sum(r["games"] for r in rows)
+            return {
+                "season": season,
+                "leaguePointsPerGame": round(sum(r["points_for"] for r in rows) / games, 2),
+                "teams": [{"teamId": r["team_id"], "teamName": r["team_name"], "conference": r["conference"],
+                           "division": r["division"], "wins": r["wins"], "losses": r["losses"], "ties": r["ties"],
+                           "games": r["games"],
+                           "pointsForPerGame": round(r["points_for"] / r["games"], 2),
+                           "pointsAgainstPerGame": round(r["points_against"] / r["games"], 2)} for r in rows],
+            }
+        result = db_call(lambda: cached(f"league:{season}", load))
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"No league data for season={season}")
         return result
 
     # --- team defense --------------------------------------------------------

@@ -199,7 +199,7 @@ export function simulateGame(team1: TeamProfile, team2: TeamProfile, options: Ga
       stats[offense].touchdowns++;
       outcome = "RETURN_TD";
       points = { team: offense, value: 6 + conv.pts };
-      if (!fast) text = `${off.name} take the kick back for a touchdown!${conv.note}`;
+      if (!fast) text = `Kick return touchdown for ${off.name}!${conv.note}`;
     } else {
       const m = base[offense];
       let move = m.move + form[offense] - form[defense] * 0.5 + homeEdge(offense);
@@ -237,11 +237,11 @@ export function simulateGame(team1: TeamProfile, team2: TeamProfile, options: Ga
           stats[offense].fieldGoals++;
           outcome = "FG";
           points = { team: offense, value: 3 };
-          if (!fast) text = `${off.name} kick a field goal.`;
+          if (!fast) text = `Field goal, ${off.name}.`;
         } else {
           outcome = "FG_MISS";
           shortField[defense] = true;
-          if (!fast) text = `${off.name} miss a field goal.`;
+          if (!fast) text = `Missed field goal for ${off.name}.`;
         }
       } else if (pick === "TO") {
         stats[offense].turnovers++;
@@ -282,13 +282,14 @@ export function simulateGame(team1: TeamProfile, team2: TeamProfile, options: Ga
       } else if (pick === "DOWNS") {
         outcome = "DOWNS";
         shortField[defense] = true;
-        if (!fast) text = `${off.name} turn it over on downs.`;
+        if (!fast) text = `Turnover on downs for ${off.name}.`;
       } else {
         outcome = lastInHalf ? "END_HALF" : "PUNT";
-        if (!fast) text = lastInHalf ? `${off.name} run out the clock.` : `${off.name} punt.`;
+        if (!fast) text = lastInHalf ? `End of half for ${off.name}.` : `Punt, ${off.name}.`;
       }
     }
 
+    if (text) text = text.charAt(0).toUpperCase() + text.slice(1);
     drives.push({ index, quarter, offense, outcome, points, score: [score[0], score[1]], text });
 
     if (!fast && points) {
@@ -368,7 +369,7 @@ export function simulateGame(team1: TeamProfile, team2: TeamProfile, options: Ga
     for (const t of [1, 2] as const) {
       if (score[other(t) - 1] === 0) {
         momentCandidates.push({
-          quarter: 4, team: t, text: `${teams[t].attribution.defenseName} pitch a shutout.`,
+          quarter: 4, team: t, text: `Shutout by the ${teams[t].attribution.defenseName}.`,
           score: [score[0], score[1]], priority: 70, order: drives.length + extra++,
         });
       }
@@ -389,6 +390,14 @@ export function simulateGame(team1: TeamProfile, team2: TeamProfile, options: Ga
       .slice(0, 5)
       .sort((a, b) => a.order - b.order)
       .map(({ quarter, team, text, score: s }) => ({ quarter, team, text, score: s }));
+    // The same thing can happen twice (two picks of the same QB) — say so instead of repeating.
+    const counts = new Map<string, number>();
+    const ordinals = ["", "", "again", "for the third time", "for the fourth time", "for the fifth time"];
+    for (const m of keyMoments) {
+      const n = (counts.get(m.text) ?? 0) + 1;
+      counts.set(m.text, n);
+      if (n >= 2) m.text = m.text.replace(/\.$/, ` ${ordinals[n] ?? "yet again"}.`);
+    }
   }
 
   return {

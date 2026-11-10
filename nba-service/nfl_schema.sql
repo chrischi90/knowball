@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS nfl_team_seasons (
     PRIMARY KEY (team_id, season)
 );
 
+-- Added after the first seed: real scoring, used for season-mode opponents and the backtest.
+ALTER TABLE nfl_team_seasons ADD COLUMN IF NOT EXISTS points_for INTEGER;
+ALTER TABLE nfl_team_seasons ADD COLUMN IF NOT EXISTS points_against INTEGER;
+ALTER TABLE nfl_team_seasons ADD COLUMN IF NOT EXISTS games INTEGER;
+
 CREATE TABLE IF NOT EXISTS nfl_players (
     player_id    TEXT PRIMARY KEY,
     pfr_id       TEXT,

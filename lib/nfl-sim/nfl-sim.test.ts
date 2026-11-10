@@ -245,3 +245,14 @@ describe("game engine", () => {
     expect(sum / n).toBeLessThan(0.52);
   });
 });
+
+describe("key moment text", () => {
+  it("never repeats the exact same sentence", () => {
+    const a = profileFromUnits("A", 0, -1);
+    const b = profileFromUnits("B", 0, 1.5);
+    for (let seed = 1; seed <= 200; seed++) {
+      const texts = simulateGame(a, b, { seed }).keyMoments.map((m) => m.text);
+      expect(new Set(texts).size).toBe(texts.length);
+    }
+  });
+});

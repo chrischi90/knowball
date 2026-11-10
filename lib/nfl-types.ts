@@ -193,6 +193,26 @@ export type NflTeamDefense = {
   source: NflStatSource;
 };
 
+/** GET /nfl/league/teams?season= → real records and scoring (default: last completed season). */
+export type NflLeagueTeam = {
+  teamId: string;
+  teamName: string;
+  conference: "AFC" | "NFC";
+  division: string;
+  wins: number;
+  losses: number;
+  ties: number;
+  games: number;
+  pointsForPerGame: number;
+  pointsAgainstPerGame: number;
+};
+
+export type NflLeagueSeason = {
+  season: number;
+  leaguePointsPerGame: number;
+  teams: NflLeagueTeam[];
+};
+
 // ---------------------------------------------------------------------------
 // Typed rule re-exports
 // ---------------------------------------------------------------------------

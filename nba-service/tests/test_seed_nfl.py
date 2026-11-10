@@ -130,7 +130,8 @@ def test_team_records_handle_ties_unplayed_games_and_relocation():
         {"season": "2026", "game_type": "REG", "home_team": "KC", "away_team": "LAC", "home_score": "", "away_score": ""},
     ]
     r = s.team_records(games)
-    assert r[("LAC", 2016)] == {"wins": 0, "losses": 1, "ties": 1, "raw_abbr": "SD"}
+    assert r[("LAC", 2016)] == {"wins": 0, "losses": 1, "ties": 1, "raw_abbr": "SD",
+                                "points_for": 30, "points_against": 50, "games": 2}
     assert r[("KC", 2016)]["wins"] == 1 and r[("KC", 2016)]["ties"] == 1
     assert ("KC", 2026) not in r
 

@@ -65,6 +65,15 @@ export type TeamProfile = {
   };
 };
 
+/**
+ * Backtest calibration: rebuilding all 861 real team-seasons (1999-2025) and regressing actual
+ * point differential on simulated showed the raw ratings spread teams ~1.37x too far apart
+ * (slope 0.73, r 0.90). Scaling unit strengths by this factor makes real rosters reproduce
+ * real results. It's a uniform scale, not a cap — super teams still dominate on merit.
+ * Re-run scripts/backtest_nfl.ts after changing any rating weights.
+ */
+export const RATING_SCALE = 0.72;
+
 const safeDiv = (n: number, d: number) => (d > 0 ? n / d : 0);
 const nz = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? 0 : v);
 
@@ -254,16 +263,17 @@ export function buildTeamProfile(roster: NflSimRoster): TeamProfile {
     { name: roster.RB.name, weight: Math.max(0.1, 0.4 + rb.receiving) },
   ];
 
+  const k = RATING_SCALE;
   return {
     name: roster.name,
-    pass,
-    rush: rushUnit,
+    pass: k * pass,
+    rush: k * rushUnit,
     passShare,
-    secure,
-    passDef,
-    runDef,
-    takeaway,
-    passRush,
+    secure: k * secure,
+    passDef: k * passDef,
+    runDef: k * runDef,
+    takeaway: k * takeaway,
+    passRush: k * passRush,
     players: [
       { name: roster.QB.name, slot: "QB", value: qb.pass },
       { name: roster.RB.name, slot: "RB", value: rb.rush },

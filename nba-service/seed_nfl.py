@@ -294,7 +294,11 @@ def team_records(games: Iterable[dict]) -> Dict[Tuple[str, int], dict]:
         hs, as_ = _num(g["home_score"]), _num(g["away_score"])
         for raw, own, opp in ((g["home_team"], hs, as_), (g["away_team"], as_, hs)):
             key = (franchise_id(raw), season)
-            r = rec.setdefault(key, {"wins": 0, "losses": 0, "ties": 0, "raw_abbr": raw})
+            r = rec.setdefault(key, {"wins": 0, "losses": 0, "ties": 0, "raw_abbr": raw,
+                                     "points_for": 0, "points_against": 0, "games": 0})
+            r["points_for"] += int(own)
+            r["points_against"] += int(opp)
+            r["games"] += 1
             if own > opp:
                 r["wins"] += 1
             elif own < opp:
@@ -455,7 +459,8 @@ def seed(start: int, end: int, current_only: bool, skip_madden: bool) -> None:
 
     records = team_records(games)
     team_season_rows = [
-        (tid, s, season_team_name(tid, r["raw_abbr"], s, team_name[tid]), r["wins"], r["losses"], r["ties"])
+        (tid, s, season_team_name(tid, r["raw_abbr"], s, team_name[tid]), r["wins"], r["losses"], r["ties"],
+         r["points_for"], r["points_against"], r["games"])
         for (tid, s), r in records.items()
         if s in seasons and tid in team_name
     ]
@@ -586,9 +591,12 @@ def seed(start: int, end: int, current_only: bool, skip_madden: bool) -> None:
                   abbreviation = EXCLUDED.abbreviation, conference = EXCLUDED.conference,
                   division = EXCLUDED.division""", team_rows)
             execute_values(cur, """
-                INSERT INTO nfl_team_seasons (team_id, season, team_name, wins, losses, ties) VALUES %s
+                INSERT INTO nfl_team_seasons (team_id, season, team_name, wins, losses, ties,
+                  points_for, points_against, games) VALUES %s
                 ON CONFLICT (team_id, season) DO UPDATE SET team_name = EXCLUDED.team_name,
-                  wins = EXCLUDED.wins, losses = EXCLUDED.losses, ties = EXCLUDED.ties""", team_season_rows)
+                  wins = EXCLUDED.wins, losses = EXCLUDED.losses, ties = EXCLUDED.ties,
+                  points_for = EXCLUDED.points_for, points_against = EXCLUDED.points_against,
+                  games = EXCLUDED.games""", team_season_rows)
             execute_values(cur, """
                 INSERT INTO nfl_players (player_id, pfr_id, player_name, primary_position, birth_date,
                   college, draft_year, draft_round, draft_pick) VALUES %s

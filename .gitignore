@@ -40,3 +40,4 @@ yarn-error.log*
 
 # NFL seed download cache
 nba-service/.nflverse_cache/
+nba-service/nfl_backtest.json

@@ -3,6 +3,7 @@
  * NBA_SERVICE_URL as lib/nba-api.ts — NFL routes are mounted alongside NBA ones.
  */
 import type {
+  NflLeagueSeason,
   NflPlayer,
   NflPlayerStats,
   NflSeasonContext,
@@ -95,4 +96,9 @@ export function fetchNflDefenseSeasons(teamId: string, ctx?: FetchContext) {
 export function fetchNflTeamDefense(teamId: string, season?: number, ctx?: FetchContext) {
   const qs = season != null ? `?season=${season}` : "";
   return get<NflTeamDefense>(`/teams/${teamId}/defense${qs}`, HOUR, ctx);
+}
+
+export function fetchNflLeagueSeason(season?: number, ctx?: FetchContext) {
+  const qs = season != null ? `?season=${season}` : "";
+  return get<NflLeagueSeason>(`/league/teams${qs}`, 24 * HOUR, ctx);
 }
