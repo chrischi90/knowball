@@ -2,7 +2,10 @@
  * In-memory game state store. Keyed by gameId.
  */
 
+const nflRules = require("../lib/nfl-rules.js");
+
 const POSITIONS = ["PG", "SG", "SF", "PF", "C"];
+const SPORTS = ["nba", "nfl"];
 
 function createEmptyRosterJS() {
   const roster = {};
@@ -10,6 +13,15 @@ function createEmptyRosterJS() {
     roster[p] = { position: p, playerId: null, playerName: null, teamId: null, naturalPosition: null };
   });
   return roster;
+}
+
+function createEmptyRosterFor(sport) {
+  return sport === "nfl" ? nflRules.createEmptyNflRoster() : createEmptyRosterJS();
+}
+
+function isRosterFull(sport, roster) {
+  if (sport === "nfl") return nflRules.isNflRosterComplete(roster);
+  return POSITIONS.every((p) => roster[p].playerId);
 }
 
 function generateGameId() {
@@ -22,10 +34,12 @@ const games = new Map();
 /**
  * @returns {GameState}
  */
-function createGame() {
+function createGame(sport = "nba") {
   const gameId = generateGameId();
+  const resolvedSport = SPORTS.includes(sport) ? sport : "nba";
   const state = {
     gameId,
+    sport: resolvedSport,
     phase: "lobby",
     gameMode: "all_time",
     firstDrafter: 1,
@@ -34,7 +48,7 @@ function createGame() {
     currentTurn: 1,
     wheelTeamId: null,
     wheelTeamName: null,
-    rosters: { 1: createEmptyRosterJS(), 2: createEmptyRosterJS() },
+    rosters: { 1: createEmptyRosterFor(resolvedSport), 2: createEmptyRosterFor(resolvedSport) },
     takenPlayerIds: [],
     simulationResult: null,
   };
@@ -98,22 +112,64 @@ function pickPlayer(gameId, playerNumber, playerId, playerName, position, teamId
   if (game.currentTurn !== playerNumber) return null;
   if (game.takenPlayerIds.includes(playerId)) return null;
   const roster = game.rosters[playerNumber];
-  if (!roster[position] || roster[position].playerId) return null;
-
-  roster[position] = { position, playerId, playerName, teamId: teamId ?? null, naturalPosition: naturalPosition ?? null };
+  if (game.sport === "nfl") {
+    const err = nflRules.validateNflPlayerPick({
+      roster,
+      slot: position,
+      player: { id: playerId, position: nflRules.normalizeNflPosition(naturalPosition) },
+      takenPlayerIds: game.takenPlayerIds,
+    });
+    if (err) return null;
+    roster[position] = { slot: position, playerId, playerName, teamId: teamId ?? null, naturalPosition: naturalPosition ?? null };
+  } else {
+    if (!roster[position] || roster[position].playerId) return null;
+    roster[position] = { position, playerId, playerName, teamId: teamId ?? null, naturalPosition: naturalPosition ?? null };
+  }
   game.takenPlayerIds.push(playerId);
+  return finishTurn(game, playerNumber);
+}
+
+function finishTurn(game, playerNumber) {
   game.wheelTeamId = null;
   game.wheelTeamName = null;
   game.currentTurn = playerNumber === 1 ? 2 : 1;
-
-  const p1Full =
-    POSITIONS.every((p) => game.rosters[1][p].playerId) ?? false;
-  const p2Full =
-    POSITIONS.every((p) => game.rosters[2][p].playerId) ?? false;
-  if (p1Full && p2Full) {
+  if (isRosterFull(game.sport, game.rosters[1]) && isRosterFull(game.sport, game.rosters[2])) {
     game.phase = "simulation";
   }
   return game;
+}
+
+/**
+ * NFL: lock the landed team's defense into TEAM_DEF. Returns { game } or { error }.
+ * active_only must use the current stats season; all_time may pick any season from
+ * NFL_ALL_TIME_START_SEASON to the current one (the sim rejects seasons with no data).
+ * In 2-player games, a team's defense can only be locked by one player (any season).
+ */
+function lockDefense(gameId, playerNumber, season, now = new Date()) {
+  const game = games.get(gameId);
+  if (!game || game.sport !== "nfl" || game.phase !== "drafting") return { error: "Invalid game" };
+  if (game.currentTurn !== playerNumber) return { error: "Not your turn" };
+  const ctx = nflRules.getNflSeasonContext(now);
+  const available = [];
+  for (let s = nflRules.NFL_ALL_TIME_START_SEASON; s <= ctx.season; s++) available.push(s);
+  const error = nflRules.validateTeamDefensePick({
+    roster: game.rosters[playerNumber],
+    opponentRoster: game.rosters[playerNumber === 1 ? 2 : 1],
+    teamId: game.wheelTeamId,
+    wheelTeamId: game.wheelTeamId,
+    season,
+    gameMode: game.gameMode,
+    activeSeason: ctx.statsSeason,
+    availableSeasons: available,
+  });
+  if (error) return { error };
+  game.rosters[playerNumber].TEAM_DEF = {
+    slot: "TEAM_DEF",
+    teamId: game.wheelTeamId,
+    teamName: game.wheelTeamName,
+    season,
+  };
+  return { game: finishTurn(game, playerNumber) };
 }
 
 function setSimulationResult(gameId, result) {
@@ -141,7 +197,7 @@ function rematchGame(gameId) {
   game.wheelTeamId = null;
   game.gameMode = game.gameMode || "all_time";
   game.wheelTeamName = null;
-  game.rosters = { 1: createEmptyRosterJS(), 2: createEmptyRosterJS() };
+  game.rosters = { 1: createEmptyRosterFor(game.sport), 2: createEmptyRosterFor(game.sport) };
   game.takenPlayerIds = [];
   game.simulationResult = null;
   game.firstDrafter = null;
@@ -166,6 +222,7 @@ module.exports = {
   spinWheel,
   clearWheelTeam,
   pickPlayer,
+  lockDefense,
   setSimulationResult,
   rematchGame,
   deleteGame,

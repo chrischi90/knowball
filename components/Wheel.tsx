@@ -15,9 +15,9 @@ type WheelProps = {
   onSpinStart?: () => void;
   onSpinBroadcast?: (targetDisplayRotation: number) => void;
   remoteSpinTarget?: number | null;
+  /** Team colors keyed by abbreviation (defaults to NBA colors). */
+  teamColors?: Record<string, string>;
 };
-
-const SEGMENT_DEG = 360 / 30;
 
 // NBA Official Team Colors (primary colors)
 const NBA_TEAM_COLORS: Record<string, string> = {
@@ -31,11 +31,13 @@ const NBA_TEAM_COLORS: Record<string, string> = {
   WAS: "#002B81", IND: "#002D62",
 };
 
-function getTeamColor(abbreviation: string): string {
-  return NBA_TEAM_COLORS[abbreviation] || "#4B5563";
+function getTeamColor(abbreviation: string, colors: Record<string, string>): string {
+  return colors[abbreviation] || "#4B5563";
 }
 
-export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, myNumber, currentTurn, onSpin, onSpinStart, onSpinBroadcast, remoteSpinTarget }: WheelProps) {
+export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, myNumber, currentTurn, onSpin, onSpinStart, onSpinBroadcast, remoteSpinTarget, teamColors = NBA_TEAM_COLORS }: WheelProps) {
+  // One segment per team (30 NBA, 32 NFL).
+  const SEGMENT_DEG = 360 / Math.max(teams.length, 1);
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [landedIndex, setLandedIndex] = useState<number | null>(null);
@@ -48,10 +50,10 @@ export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, my
   const colorMap = useMemo(() => {
     const map: Record<string, string> = {};
     teams.forEach((team) => {
-      map[team.id] = getTeamColor(team.abbreviation);
+      map[team.id] = getTeamColor(team.abbreviation, teamColors);
     });
     return map;
-  }, [teams.length, teams]);
+  }, [teams.length, teams, teamColors]);
 
   // Play the spin animation when the other player spins
   useEffect(() => {
@@ -164,7 +166,7 @@ export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, my
       }
     };
     requestAnimationFrame(animate);
-  }, [isMyTurn, spinning, teams, rotation, onSpin]);
+  }, [isMyTurn, spinning, teams, rotation, onSpin, onSpinStart, onSpinBroadcast, SEGMENT_DEG]);
 
   if (teams.length === 0) {
     return (
@@ -174,10 +176,13 @@ export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, my
     );
   }
 
-  const displayTeams = teams.slice(0, 30);
+  const displayTeams = teams;
   const wheelSize = 384;
   const radius = wheelSize / 2;
-  const labelRadius = radius * 0.65; // Slightly smaller to avoid center button
+  // 30 NBA teams keep the original layout; denser wheels (32 NFL teams) push labels out and
+  // shrink them slightly so neighbors at the top/bottom don't collide.
+  const dense = displayTeams.length > 30;
+  const labelRadius = radius * (dense ? 0.72 : 0.65); // Slightly smaller to avoid center button
 
   return (
     <div className="rounded-lg bg-zinc-900 p-4">
@@ -246,7 +251,7 @@ export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, my
                 textAnchor="middle"
                 dominantBaseline="middle"
                 fill="white"
-                fontSize="13"
+                fontSize={dense ? "11.5" : "13"}
                 fontWeight="700"
                 pointerEvents="none"
               >
