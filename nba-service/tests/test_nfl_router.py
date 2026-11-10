@@ -172,3 +172,11 @@ def test_per_game_uses_only_games_where_stat_was_tracked():
     line = r.per_game_line(t, "TE")
     assert line["receiving"]["rec"] == 4.0   # 80 / 20 games
     assert line["receiving"]["tgt"] == 6.0   # 60 / 10 tracked games, not 60 / 20
+
+
+def test_weighted_league_line_weights_by_player_games():
+    per_season = {2004: {"pass_yds": 200.0, "rec_tgt": None}, 2020: {"pass_yds": 260.0, "rec_tgt": 8.0}}
+    out = r.weighted_league_line(per_season, {2004: 15, 2020: 5})
+    assert out["pass_yds"] == 215.0          # (200*15 + 260*5) / 20
+    assert out["rec_tgt"] == 8.0             # only the tracked season counts
+    assert r.weighted_league_line({}, {2004: 1})["rec_tgt"] is None

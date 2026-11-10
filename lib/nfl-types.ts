@@ -127,6 +127,14 @@ export type NflDefensePerGame = {
  * All numbers are PER GAME, computed as (sum of totals) / (sum of games) across
  * the seasons in scope, so 14/16/17-game seasons compare fairly.
  */
+/** The four per-game blocks; a block is null when it doesn't apply to the position. */
+export type NflPerGameLine = {
+  passing: NflPassingPerGame | null;
+  rushing: NflRushingPerGame | null;
+  receiving: NflReceivingPerGame | null;
+  defense: NflDefensePerGame | null;
+};
+
 export type NflPlayerStats = {
   playerId: string;
   teamId: string;
@@ -141,6 +149,12 @@ export type NflPlayerStats = {
   rushing: NflRushingPerGame | null;
   receiving: NflReceivingPerGame | null;
   defense: NflDefensePerGame | null;
+  /**
+   * League baseline: the average qualifying starter at this position group in the same
+   * seasons, weighted by this player's games per season. Ratings are relative to this
+   * (era adjustment without a ceiling).
+   */
+  league: NflPerGameLine;
   source: NflStatSource;
 };
 
@@ -165,6 +179,17 @@ export type NflTeamDefense = {
   rushYardsAllowed: number;
   takeaways: number;
   sacks: number | null;
+  playsAllowed: number;
+  /** League per-game averages for the same season. */
+  league: {
+    pointsAllowed: number;
+    yardsAllowed: number;
+    passYardsAllowed: number;
+    rushYardsAllowed: number;
+    takeaways: number;
+    sacks: number | null;
+    playsAllowed: number;
+  };
   source: NflStatSource;
 };
 

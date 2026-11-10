@@ -117,6 +117,27 @@ def per_game_line(total: dict, position: str) -> dict:
     return {"passing": passing, "rushing": rushing, "receiving": receiving, "defense": defense}
 
 
+def weighted_league_line(per_season: Dict[int, dict], weights: Dict[int, float]) -> dict:
+    """
+    Combine per-season league per-game lines into one, weighted by the player's games in
+    each season. Nullable columns average only over seasons where they were tracked.
+    Returns a 'total' with gp=1 suitable for per_game_line().
+    """
+    out: Dict[str, Optional[float]] = {"gp": 1.0, "gs": 0.0}
+    for col in STAT_COLUMNS:
+        if col in ("gp", "gs"):
+            continue
+        num = den = 0.0
+        for season, w in weights.items():
+            v = (per_season.get(season) or {}).get(col)
+            if v is None or w <= 0:
+                continue
+            num += v * w
+            den += w
+        out[col] = (num / den) if den else (None if col in NULLABLE_COLUMNS else 0.0)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Rookie projection
 # ---------------------------------------------------------------------------
@@ -353,6 +374,34 @@ def create_nfl_router(get_db: Callable, release_db: Callable) -> APIRouter:
             return tables
         return cached(f"proj:{stats_season}:{position}", load)
 
+    def league_per_game(season: int, position: str) -> dict:
+        """Average qualifying starter's per-game line at this position group in a season."""
+        def load():
+            group = POSITION_GROUP.get(position, [position])
+            cols = ", ".join(STAT_COLUMNS)
+            rows = query(
+                f"SELECT {cols} FROM nfl_player_season_stats WHERE season = %s AND position = ANY(%s)",
+                (season, group),
+            )
+            rows = [r for r in rows if _qualifies(position, r)]
+            if not rows:
+                return {}
+            total = sum_rows(rows)
+            line: Dict[str, Optional[float]] = {}
+            for col in STAT_COLUMNS:
+                if col in ("gp", "gs"):
+                    continue
+                v = total[col]
+                denom = total.get(f"_gp:{col}", total["gp"]) or total["gp"]
+                line[col] = None if v is None else v / denom
+            return line
+        return cached(f"league:{season}:{position}", load) or {}
+
+    def league_line(position: str, weights: Dict[int, float]) -> dict:
+        per_season = {s: league_per_game(s, position) for s in weights}
+        line = per_game_line(weighted_league_line(per_season, weights), position)
+        return line
+
     def build_stats(player_id: str, team_id: str, game_mode: str) -> Optional[dict]:
         ctx = season_context()
         player = query("SELECT primary_position FROM nfl_players WHERE player_id = %s", (player_id,))
@@ -387,7 +436,9 @@ def create_nfl_router(get_db: Callable, release_db: Callable) -> APIRouter:
                     total = project_rookie_totals(pct, tables)
                     return {"playerId": player_id, "teamId": team_id, "position": position,
                             "gp": 0, "gs": 0, "seasons": [], "statsTeamId": team_id,
-                            **per_game_line(total, position), "source": "projection"}
+                            **per_game_line(total, position),
+                            "league": league_line(position, {last_completed: 1.0}),
+                            "source": "projection"}
             if not rows:
                 # Veteran who missed the stats season (injury etc.) → most recent season played.
                 latest = query("SELECT MAX(season) AS s FROM nfl_player_season_stats WHERE player_id = %s",
@@ -404,10 +455,14 @@ def create_nfl_router(get_db: Callable, release_db: Callable) -> APIRouter:
         for r in rows:
             gp_by_team[r["team_id"]] = gp_by_team.get(r["team_id"], 0) + (r["gp"] or 0)
         stats_team = team_id if team_id in gp_by_team else max(gp_by_team, key=gp_by_team.get)
+        weights: Dict[int, float] = {}
+        for r in rows:
+            weights[int(r["season"])] = weights.get(int(r["season"]), 0.0) + float(r["gp"] or 0)
         return {"playerId": player_id, "teamId": team_id, "position": position,
                 "gp": int(total["gp"]), "gs": int(total["gs"] or 0),
-                "seasons": sorted({int(r["season"]) for r in rows}), "statsTeamId": stats_team,
-                **per_game_line(total, position), "source": source}
+                "seasons": sorted(weights), "statsTeamId": stats_team,
+                **per_game_line(total, position),
+                "league": league_line(position, weights), "source": source}
 
     @router.get("/players/{player_id}/stats")
     def get_player_stats(player_id: str, team_id: str, game_mode: str = "all_time"):
@@ -456,6 +511,17 @@ def create_nfl_router(get_db: Callable, release_db: Callable) -> APIRouter:
                 return None
             r = rows[0]
             g = r["games"] or 1
+            lg = query(
+                """
+                SELECT SUM(points_allowed)::float / SUM(games) AS pa, SUM(yards_allowed)::float / SUM(games) AS ya,
+                       SUM(pass_yds_allowed)::float / SUM(games) AS pya, SUM(rush_yds_allowed)::float / SUM(games) AS rya,
+                       SUM(interceptions + fumbles_recovered)::float / SUM(games) AS tk,
+                       SUM(sacks)::float / NULLIF(SUM(CASE WHEN sacks IS NOT NULL THEN games END), 0) AS sk,
+                       SUM(plays_allowed)::float / NULLIF(SUM(games), 0) AS plays
+                FROM nfl_team_defense_season_stats WHERE season = %s
+                """,
+                (season,),
+            )[0]
             return {"teamId": team_id, "season": season, "teamName": r["team_name"], "games": r["games"],
                     "pointsAllowed": round(r["points_allowed"] / g, 2),
                     "yardsAllowed": round(r["yards_allowed"] / g, 2),
@@ -463,6 +529,12 @@ def create_nfl_router(get_db: Callable, release_db: Callable) -> APIRouter:
                     "rushYardsAllowed": round(r["rush_yds_allowed"] / g, 2),
                     "takeaways": round((r["interceptions"] + r["fumbles_recovered"]) / g, 2),
                     "sacks": None if r["sacks"] is None else round(r["sacks"] / g, 2),
+                    "playsAllowed": round((r["plays_allowed"] or 0) / g, 2),
+                    "league": {"pointsAllowed": round(lg["pa"], 2), "yardsAllowed": round(lg["ya"], 2),
+                               "passYardsAllowed": round(lg["pya"], 2), "rushYardsAllowed": round(lg["rya"], 2),
+                               "takeaways": round(lg["tk"], 2),
+                               "sacks": None if lg["sk"] is None else round(lg["sk"], 2),
+                               "playsAllowed": round(lg["plays"] or 0, 2)},
                     "source": "db"}
         result = db_call(lambda: cached(f"defense:{team_id}:{season}", load))
         if result is None:
