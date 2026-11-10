@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { decodeShareData } from "@/lib/share-utils";
+import { decodeShareData, type ShareData } from "@/lib/share-utils";
 import { POSITIONS } from "@/lib/game-types";
 
 const BASE_URL =
@@ -8,6 +8,24 @@ const BASE_URL =
 const OG_IMAGE_VERSION = "brand-v2";
 
 const POSITIONS_ARRAY = [...POSITIONS] as string[];
+const NFL_SLOT_LABELS = ["QB", "RB", "WR", "WR", "WR", "TE", "DEF", "D/ST"];
+
+function soloView(parsed: Extract<ShareData, { mode: "solo" }>) {
+  if (parsed.sport === "nfl") {
+    const { rs, w, l, t, r } = parsed.data;
+    const result =
+      r === "Champion" ? "🏆 Super Bowl Champions!" : r ? `Lost in the ${r === "Wild Card" || r === "Divisional" ? `${r} Round` : r}` : null;
+    return { rows: NFL_SLOT_LABELS.map((pos, i) => ({ pos, name: rs[i] ?? "—" })), w, l, t, result };
+  }
+  const d = parsed.data;
+  return {
+    rows: POSITIONS_ARRAY.map((pos) => ({ pos, name: d[pos.toLowerCase() as "pg"] as string })),
+    w: d.w,
+    l: d.l,
+    t: 0,
+    result: d.r ? (d.r === "Champion" ? "🏆 NBA Champion!" : d.r) : null,
+  };
+}
 
 type Props = {
   searchParams: { mode?: string; d?: string };
@@ -28,7 +46,13 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   let description = "Can you beat my squad? Play Knowball!";
 
   if (parsed) {
-    if (parsed.mode === "solo") {
+    if (parsed.mode === "solo" && parsed.sport === "nfl") {
+      const { w, l, t, r } = parsed.data;
+      const rec = t ? `${w}–${l}–${t}` : `${w}–${l}`;
+      const result = r === "Champion" ? "Super Bowl Champions" : r ? `Lost in the ${r}` : "Missed Playoffs";
+      title = `${rec} | ${result} – Knowball`;
+      description = `I drafted an NFL squad and went ${rec}. Can you beat it? Play Knowball!`;
+    } else if (parsed.mode === "solo") {
       const { w, l, r } = parsed.data;
       const result = r === "Champion" ? "NBA Champion" : r ?? "Missed Playoffs";
       title = `${w}–${l} | ${result} – Knowball`;
@@ -61,6 +85,7 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
 export default function SharePage({ searchParams }: Props) {
   const { d } = searchParams;
   const parsed = d ? decodeShareData(d) : null;
+  const solo = parsed?.mode === "solo" ? soloView(parsed) : null;
 
   return (
     <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6">
@@ -78,15 +103,12 @@ export default function SharePage({ searchParams }: Props) {
                   Roster
                 </p>
                 <ul className="space-y-1 text-sm">
-                  {POSITIONS_ARRAY.map((pos) => {
-                    const name = parsed.data[pos.toLowerCase() as keyof typeof parsed.data] as string;
-                    return (
-                      <li key={pos} className="flex justify-between gap-2">
-                        <span className="text-zinc-500 w-8">{pos}</span>
-                        <span className="text-white">{name}</span>
-                      </li>
-                    );
-                  })}
+                  {solo!.rows.map(({ pos, name }, i) => (
+                    <li key={`${pos}-${i}`} className="flex justify-between gap-2">
+                      <span className="text-zinc-500 w-10">{pos}</span>
+                      <span className="text-white text-right">{name}</span>
+                    </li>
+                  ))}
                 </ul>
               </div>
 
@@ -95,19 +117,25 @@ export default function SharePage({ searchParams }: Props) {
                   Regular Season
                 </p>
                 <div className="flex items-baseline justify-center gap-2">
-                  <span className="text-4xl font-bold text-green-400">{parsed.data.w}</span>
+                  <span className="text-4xl font-bold text-green-400">{solo!.w}</span>
                   <span className="text-2xl text-zinc-500">–</span>
-                  <span className="text-4xl font-bold text-red-400">{parsed.data.l}</span>
+                  <span className="text-4xl font-bold text-red-400">{solo!.l}</span>
+                  {solo!.t ? (
+                    <>
+                      <span className="text-2xl text-zinc-500">–</span>
+                      <span className="text-4xl font-bold text-white">{solo!.t}</span>
+                    </>
+                  ) : null}
                 </div>
               </div>
 
-              {parsed.data.r && (
+              {solo!.result && (
                 <div className="text-center">
                   <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1">
                     Postseason
                   </p>
                   <p className="font-semibold text-yellow-400">
-                    {parsed.data.r === "Champion" ? "🏆 NBA Champion!" : parsed.data.r}
+                    {solo!.result}
                   </p>
                 </div>
               )}
@@ -143,9 +171,9 @@ export default function SharePage({ searchParams }: Props) {
                     Player {idx + 1} Roster
                   </p>
                   <ul className="space-y-1 text-sm">
-                    {POSITIONS_ARRAY.map((pos, i) => (
-                      <li key={pos} className="flex justify-between gap-1">
-                        <span className="text-zinc-500 w-8">{pos}</span>
+                    {(parsed.sport === "nfl" ? NFL_SLOT_LABELS : POSITIONS_ARRAY).map((pos, i) => (
+                      <li key={`${pos}-${i}`} className="flex justify-between gap-1">
+                        <span className="text-zinc-500 w-10">{pos}</span>
                         <span className="text-white text-xs">{players[i]}</span>
                       </li>
                     ))}

@@ -1,0 +1,33 @@
+# Refreshes NFL rosters, current-season stats, team defense, and rookie (Madden) ratings in the
+# production database. nflverse updates its files nightly; Tuesday morning picks up Monday
+# Night Football. Safe to re-run: every write is an upsert, and only the current season's
+# roster rows are replaced.
+#
+# Requires repo secret DATABASE_URL (same value as the Render data service).
+name: NFL weekly data refresh
+
+on:
+  schedule:
+    - cron: "0 12 * * 2" # Tuesdays 12:00 UTC
+  workflow_dispatch: {}
+
+concurrency:
+  group: nfl-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install "psycopg2-binary>=2.9.0"
+      - name: Refresh current season
+        working-directory: nba-service
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python seed_nfl.py --current-only

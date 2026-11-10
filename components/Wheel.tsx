@@ -15,9 +15,9 @@ type WheelProps = {
   onSpinStart?: () => void;
   onSpinBroadcast?: (targetDisplayRotation: number) => void;
   remoteSpinTarget?: number | null;
+  /** Team colors keyed by abbreviation (defaults to NBA colors). */
+  teamColors?: Record<string, string>;
 };
-
-const SEGMENT_DEG = 360 / 30;
 
 // NBA Official Team Colors (primary colors)
 const NBA_TEAM_COLORS: Record<string, string> = {
@@ -31,11 +31,13 @@ const NBA_TEAM_COLORS: Record<string, string> = {
   WAS: "#002B81", IND: "#002D62",
 };
 
-function getTeamColor(abbreviation: string): string {
-  return NBA_TEAM_COLORS[abbreviation] || "#4B5563";
+function getTeamColor(abbreviation: string, colors: Record<string, string>): string {
+  return colors[abbreviation] || "#4B5563";
 }
 
-export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, myNumber, currentTurn, onSpin, onSpinStart, onSpinBroadcast, remoteSpinTarget }: WheelProps) {
+export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, myNumber, currentTurn, onSpin, onSpinStart, onSpinBroadcast, remoteSpinTarget, teamColors = NBA_TEAM_COLORS }: WheelProps) {
+  // One segment per team (30 NBA, 32 NFL).
+  const SEGMENT_DEG = 360 / Math.max(teams.length, 1);
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [landedIndex, setLandedIndex] = useState<number | null>(null);
@@ -48,10 +50,10 @@ export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, my
   const colorMap = useMemo(() => {
     const map: Record<string, string> = {};
     teams.forEach((team) => {
-      map[team.id] = getTeamColor(team.abbreviation);
+      map[team.id] = getTeamColor(team.abbreviation, teamColors);
     });
     return map;
-  }, [teams.length, teams]);
+  }, [teams.length, teams, teamColors]);
 
   // Play the spin animation when the other player spins
   useEffect(() => {
@@ -164,7 +166,7 @@ export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, my
       }
     };
     requestAnimationFrame(animate);
-  }, [isMyTurn, spinning, teams, rotation, onSpin]);
+  }, [isMyTurn, spinning, teams, rotation, onSpin, onSpinStart, onSpinBroadcast, SEGMENT_DEG]);
 
   if (teams.length === 0) {
     return (
@@ -174,10 +176,13 @@ export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, my
     );
   }
 
-  const displayTeams = teams.slice(0, 30);
+  const displayTeams = teams;
   const wheelSize = 384;
   const radius = wheelSize / 2;
-  const labelRadius = radius * 0.65; // Slightly smaller to avoid center button
+  // Push labels out and shrink them slightly so neighbors at the top/bottom of the wheel
+  // (where 3-letter labels sit side by side) don't collide — NBA (30) and NFL (32).
+  const dense = displayTeams.length >= 30;
+  const labelRadius = radius * (dense ? 0.72 : 0.65); // Slightly smaller to avoid center button
 
   return (
     <div className="rounded-lg bg-zinc-900 p-4">
@@ -246,7 +251,7 @@ export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, my
                 textAnchor="middle"
                 dominantBaseline="middle"
                 fill="white"
-                fontSize="13"
+                fontSize={dense ? "11.5" : "13"}
                 fontWeight="700"
                 pointerEvents="none"
               >
@@ -263,9 +268,18 @@ export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, my
           disabled={!isMyTurn || spinning}
           className="absolute inset-0 flex items-center justify-center z-10"
         >
-          <div className={`w-20 h-20 rounded-full shadow-lg flex items-center justify-center font-semibold text-white text-sm transition touch-manipulation ${!isMyTurn || spinning ? "bg-zinc-600 opacity-70 cursor-not-allowed" : "bg-orange-600 hover:bg-orange-500"}`}
-               style={{ pointerEvents: !isMyTurn || spinning ? "none" : "auto" }}>
-            {spinning ? "Spinning…" : "Spin"}
+          <div className="relative w-20 h-20">
+            {/* Throbbing underglow: prompts the user that Spin is their next move. */}
+            {isMyTurn && !spinning && (
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-0 rounded-full motion-safe:animate-spin-glow motion-reduce:shadow-[0_0_18px_6px_rgba(251,146,60,0.55)]"
+              />
+            )}
+            <div className={`relative w-20 h-20 rounded-full shadow-lg flex items-center justify-center font-semibold text-white text-sm transition touch-manipulation ${!isMyTurn || spinning ? "bg-zinc-600 opacity-70 cursor-not-allowed" : "bg-orange-600 hover:bg-orange-500"}`}
+                 style={{ pointerEvents: !isMyTurn || spinning ? "none" : "auto" }}>
+              {spinning ? "Spinning…" : "Spin"}
+            </div>
           </div>
         </button>
         

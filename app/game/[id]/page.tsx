@@ -50,6 +50,11 @@ export default function GamePage() {
       .catch(() => setError("Failed to load teams"));
   }, [gameId]);
 
+  // A football game opened at the basketball URL goes to the NFL page.
+  useEffect(() => {
+    if (game?.sport === "nfl") router.replace(`/nfl/game/${gameId}`);
+  }, [game?.sport, gameId, router]);
+
   // Clear loading screen when simulation result arrives
   useEffect(() => {
     if (game?.phase === "completed") setSimulating(false);

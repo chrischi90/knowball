@@ -138,11 +138,66 @@ def list_teams():
         raise HTTPException(status_code=502, detail=str(e))
 
 
+def _attach_headline_stats(conn, players: list, team_id: str, active_only: bool) -> None:
+    """
+    Add per-game pts/reb/ast to each player for the draft dropdown (same scope as the sim:
+    current season for active_only, the team stint for all-time). Best-effort: on any error
+    the list is returned unchanged.
+    """
+    ids = [p["id"] for p in players]
+    if not ids:
+        return
+    try:
+        with conn.cursor() as cur:
+            scope = "season = %s" if active_only else "team_id = %s"
+            params = (ids, active_seasons()["statsSeason"]) if active_only else (ids, team_id)
+            cur.execute(
+                f"""
+                SELECT player_id,
+                       SUM(pts * gp) / NULLIF(SUM(gp), 0),
+                       SUM(reb * gp) / NULLIF(SUM(gp), 0),
+                       SUM(ast * gp) / NULLIF(SUM(gp), 0)
+                FROM player_season_stats
+                WHERE player_id = ANY(%s) AND {scope}
+                GROUP BY player_id
+                """,
+                params,
+            )
+            stats = {r[0]: r[1:] for r in cur.fetchall()}
+    except Exception as e:  # never break the roster list over headline stats
+        logger.warning("headline stats unavailable for team %s: %s", team_id, e)
+        conn.rollback()
+        return
+    # Active-only rookies have no stats-season rows: show this season so far (same as the sim).
+    if active_only:
+        seasons = active_seasons()
+        missing = [pid for pid in ids if pid not in stats]
+        if missing and seasons["rosterSeason"] != seasons["statsSeason"]:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT player_id, SUM(pts * gp) / NULLIF(SUM(gp), 0), SUM(reb * gp) / NULLIF(SUM(gp), 0),
+                               SUM(ast * gp) / NULLIF(SUM(gp), 0)
+                        FROM player_season_stats WHERE player_id = ANY(%s) AND season = %s GROUP BY player_id
+                        """,
+                        (missing, seasons["rosterSeason"]),
+                    )
+                    stats.update({r[0]: r[1:] for r in cur.fetchall()})
+            except Exception as e:
+                logger.warning("current-season headline stats unavailable for team %s: %s", team_id, e)
+                conn.rollback()
+    for p in players:
+        line = stats.get(p["id"])
+        if line and line[0] is not None:
+            p["pts"], p["reb"], p["ast"] = (round(float(v), 1) for v in line)
+
+
 @app.get("/teams/{team_id}/players")
 def list_team_players(team_id: str, active_only: bool = False):
     """
     List players for this team from DB.
-    - active_only=True: current season (2025-26) only.
+    - active_only=True: current roster season (see nba_season_context).
     - active_only=False: all seeded seasons, deduplicated (most recent position wins).
     """
     conn = None
@@ -154,10 +209,10 @@ def list_team_players(team_id: str, active_only: bool = False):
                     """
                     SELECT player_id, player_name, position, jersey
                     FROM roster_players
-                    WHERE team_id = %s AND season = '2025-26'
+                    WHERE team_id = %s AND season = %s
                     ORDER BY player_name
                     """,
-                    (team_id,),
+                    (team_id, active_seasons()["rosterSeason"]),
                 )
             else:
                 cur.execute(
@@ -175,6 +230,7 @@ def list_team_players(team_id: str, active_only: bool = False):
             {"id": r[0], "name": r[1], "position": r[2], "jersey": r[3] or ""}
             for r in rows
         ]
+        _attach_headline_stats(conn, players, team_id, active_only)
         players.sort(key=lambda p: p["name"])
 
         if not players:
@@ -194,7 +250,66 @@ def list_team_players(team_id: str, active_only: bool = False):
 # Constants & helpers for Basketball Reference
 # ---------------------------------------------------------------------------
 
-CURRENT_SEASON = "2025-26"
+def _season_label(end_year: int) -> str:
+    return f"{end_year - 1}-{str(end_year)[-2:]}"
+
+
+# Mid-season switch: before this date, active-only uses LAST season's full stats with
+# THIS season's rosters (like NFL's week-10 rule); from it on, current-season stats.
+STATS_SWITCH_MONTH_DAY = (1, 15)
+
+
+def nba_season_context(today=None) -> dict:
+    """
+    Which seasons active-only uses, by date (labels like '2026-27').
+      Jul-Sep (offseason): upcoming rosters, last season's stats
+      Oct-Jan 14:          current rosters, last season's stats
+      Jan 15-Jun:          current rosters, current stats
+    """
+    import datetime as _dt
+    today = today or _dt.date.today()
+    end = today.year + 1 if today.month >= 7 else today.year
+    early = today.month >= 7 or (today.month, today.day) < STATS_SWITCH_MONTH_DAY
+    return {"rosterSeason": _season_label(end), "statsSeason": _season_label(end - 1 if early else end)}
+
+
+_latest_cache: dict = {}
+
+
+def _latest_seeded(table: str) -> Optional[str]:
+    """Newest season present in a table (cached 10 min). Season labels sort lexicographically."""
+    hit = _latest_cache.get(table)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT MAX(season) FROM {table}")  # table is a fixed internal name
+            value = cur.fetchone()[0]
+    finally:
+        release_db(conn)
+    _latest_cache[table] = (time.time(), value)
+    return value
+
+
+def active_seasons() -> dict:
+    """nba_season_context() clamped to what's actually seeded (never points at an empty season)."""
+    ctx = nba_season_context()
+    try:
+        latest_roster = _latest_seeded("roster_players")
+        latest_stats = _latest_seeded("player_season_stats")
+    except Exception as e:
+        logger.warning("latest seeded season lookup failed: %s", e)
+        return ctx
+    if latest_roster and ctx["rosterSeason"] > latest_roster:
+        ctx["rosterSeason"] = latest_roster
+    if latest_stats and ctx["statsSeason"] > latest_stats:
+        ctx["statsSeason"] = latest_stats
+    return ctx
+
+
+# Back-compat name for the active-only stats season (callers should prefer active_seasons()).
+CURRENT_SEASON = nba_season_context()["statsSeason"]
 
 _SUFFIX_RE = re.compile(r"\s+(jr\.?|sr\.?|ii|iii|iv|v)$", re.IGNORECASE)
 
@@ -486,9 +601,15 @@ def _fetch_seeded_stats(
 ) -> Optional[dict]:
     """DB-first stats lookup from seeded player_season_stats."""
     min_gp = 5 if game_mode == "active_only" else 20
-    season_filter = CURRENT_SEASON if game_mode == "active_only" else None
-
-    rows = _query_seeded_stats_rows(player_id, team_id, season_filter)
+    if game_mode == "active_only":
+        # Stats season on ANY team: offseason trades/signings keep last season's numbers.
+        seasons = active_seasons()
+        rows = _query_seeded_stats_rows(player_id, None, seasons["statsSeason"])
+        if not rows and seasons["rosterSeason"] != seasons["statsSeason"]:
+            # Rookies / players who sat out: use what they've done this season so far.
+            rows = _query_seeded_stats_rows(player_id, None, seasons["rosterSeason"])
+    else:
+        rows = _query_seeded_stats_rows(player_id, team_id, None)
     if not rows:
         logger.info(
             "seeded stats miss: no rows for player=%s team=%s mode=%s",
@@ -611,10 +732,10 @@ def _get_player_stats(
     """
     Fetch per-game stats with DB as primary and live fetch fallback.
 
-    active_only: seeded 2025-26 rows from DB → BR season scrape → nba_api fallback.
+    active_only: seeded stats-season rows (any team) → current-season rows → BR season scrape → nba_api.
     all_time:    seeded career rows scoped to team from DB → BR scrape via DB seasons → nba_api fallback.
     """
-    key = f"{player_id}:{team_id}:{game_mode}"
+    key = f"{player_id}:{team_id}:{game_mode}:{active_seasons()['statsSeason'] if game_mode == 'active_only' else ''}"
     if key in _stats_cache:
         logger.info("stats cache hit: %s", key)
         return _stats_cache[key]
@@ -623,11 +744,12 @@ def _get_player_stats(
 
     if result is None:
         if game_mode == "active_only":
-            seasons = _get_player_team_seasons(player_id, team_id) if player_id and team_id else []
-            if player_name and seasons:
-                result = _fetch_br_seasons(player_name, seasons, min_gp=5)
+            stats_season = active_seasons()["statsSeason"]
+            stats_end_year = int(stats_season[:4]) + 1
+            if player_name:
+                result = _fetch_br_seasons(player_name, [stats_end_year], min_gp=5)
             if result is None:
-                result = _fetch_nba_api_stats(player_id, team_id, season_filter=CURRENT_SEASON)
+                result = _fetch_nba_api_stats(player_id, None, season_filter=stats_season)
         else:  # all_time
             seasons = _get_player_team_seasons(player_id, team_id) if player_id and team_id else []
             if player_name and seasons:
@@ -653,7 +775,7 @@ def get_player_stats(
     """
     Get per-game stats for simulation.
     DB seeded stats are primary.
-    - game_mode=active_only: 2025-26 season only
+    - game_mode=active_only: stats season from nba_season_context() (any team)
     - game_mode=all_time: career stats scoped to team_id tenure
     Pass player_name (display form OK, e.g. 'Stephen Curry (GSW)') to enable BR fallback path.
     """
@@ -664,6 +786,12 @@ def get_player_stats(
     if result is None:
         raise HTTPException(status_code=404, detail="Player stats not found")
     return result
+
+
+# NFL endpoints (/nfl/...) share the same DB pool.
+from nfl_router import create_nfl_router  # noqa: E402
+
+app.include_router(create_nfl_router(get_db, release_db))
 
 
 @app.get("/health")

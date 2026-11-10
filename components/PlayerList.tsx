@@ -5,6 +5,13 @@ import type { NBAPlayer } from "@/lib/nba-api";
 import type { Roster } from "@/lib/game-types";
 import type { GameMode } from "@/lib/game-types";
 import { POSITIONS } from "@/lib/game-types";
+import { nameMatchRank } from "@/lib/nfl-types";
+
+const MIN_QUERY = 2;
+
+function statLine(p: NBAPlayer): string | null {
+  return p.pts == null ? null : `${p.pts} PTS · ${p.reb ?? 0} REB · ${p.ast ?? 0} AST`;
+}
 
 type PlayerListProps = {
   teamId: string;
@@ -60,10 +67,16 @@ export function PlayerList({
 
   const availablePlayers = players.filter((p) => !takenPlayerIds.includes(p.id));
   
-  // Filter players by search query
-  const filteredPlayers = availablePlayers.filter((p) =>
-    p.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // A player "fits" when his natural position is one of your open slots. Out-of-position picks
+  // are still allowed (with the usual rating penalty); fits are just listed first and tagged.
+  const fitsOpenSlot = (p: NBAPlayer) => availablePositions.includes(p.position as (typeof POSITIONS)[number]);
+
+  // Filter by search query; fits first, then best name matches, then higher scorers.
+  const filteredPlayers = availablePlayers
+    .map((p) => ({ p, rank: nameMatchRank(p.name, searchQuery), fit: fitsOpenSlot(p) ? 0 : 1 }))
+    .filter(({ rank }) => rank >= 0)
+    .sort((a, b) => a.fit - b.fit || a.rank - b.rank || (b.p.pts ?? 0) - (a.p.pts ?? 0) || a.p.name.localeCompare(b.p.name))
+    .map(({ p }) => p);
   
   // Check if query exactly matches a player name
   const exactMatch = filteredPlayers.find((p) =>
@@ -81,8 +94,8 @@ export function PlayerList({
   const handleSearchChange = (value: string) => {
     setSearchQuery(value);
     setActiveIndex(0);
-    // Show dropdown if query is 3+ chars and has matches
-    if (value.length >= 3 && availablePlayers.some((p) => p.name.toLowerCase().includes(value.toLowerCase()))) {
+    // Show dropdown once the query is MIN_QUERY+ chars and has matches
+    if (value.length >= MIN_QUERY && availablePlayers.some((p) => p.name.toLowerCase().includes(value.toLowerCase()))) {
       setIsDropdownOpen(true);
     } else {
       setIsDropdownOpen(false);
@@ -96,7 +109,7 @@ export function PlayerList({
   };
   
   const handleSearchFocus = () => {
-    if (searchQuery.length >= 3 && filteredPlayers.length > 0) {
+    if (searchQuery.length >= MIN_QUERY && filteredPlayers.length > 0) {
       setIsDropdownOpen(true);
     }
   };
@@ -167,7 +180,7 @@ export function PlayerList({
       <div className="relative mb-4">
         <input
           type="text"
-          placeholder="Type player name (3+ chars)…"
+          placeholder="Type player name…"
           value={searchQuery}
           onChange={(e) => handleSearchChange(e.target.value)}
           onFocus={handleSearchFocus}
@@ -193,9 +206,18 @@ export function PlayerList({
                     : "text-zinc-100 hover:bg-zinc-700"
                 }`}
               >
-                <div className="font-medium">{player.name}</div>
-                {player.position && (
-                  <div className="text-xs opacity-80">{player.position}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{player.name}</span>
+                  {fitsOpenSlot(player) && (
+                    <span className="shrink-0 rounded bg-green-700/70 px-1.5 py-0.5 text-[0.775rem] font-semibold text-green-100">
+                      Fits {player.position}
+                    </span>
+                  )}
+                </div>
+                {(player.position || statLine(player)) && (
+                  <div className="text-xs opacity-80 tabular-nums">
+                    {[player.position, statLine(player)].filter(Boolean).join(" · ")}
+                  </div>
                 )}
               </button>
             ))}
@@ -207,6 +229,7 @@ export function PlayerList({
       {selectedPlayer && (
         <div className="mb-4 p-3 rounded-md bg-zinc-800 border border-orange-500 text-white text-sm">
           Selected: <span className="font-medium">{selectedPlayer.name}</span>
+          {statLine(selectedPlayer) && <span className="text-zinc-400 tabular-nums"> · {statLine(selectedPlayer)}</span>}
         </div>
       )}
       {availablePositions.length > 0 && (
@@ -225,6 +248,7 @@ export function PlayerList({
                 }`}
               >
                 {pos}
+                {selectedPlayer?.position === pos && <span aria-label="natural position"> ✓</span>}
               </button>
             ))}
           </div>

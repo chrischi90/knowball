@@ -5,6 +5,8 @@ import { decodeShareData } from "@/lib/share-utils";
 export const runtime = "edge";
 
 const POSITIONS = ["PG", "SG", "SF", "PF", "C"] as const;
+// NFL slots in NFL_SLOTS order (inlined to keep the edge bundle small).
+const NFL_SLOT_LABELS = ["QB", "RB", "WR", "WR", "WR", "TE", "DEF", "D/ST"] as const;
 
 const BG = "#18181b";
 const CARD = "#27272a";
@@ -52,6 +54,19 @@ function playoffLabel(r: string | null): string {
   if (r === "Champion") return "🏆 NBA Champion!";
   if (r === "NBA Finals") return "NBA Finals";
   return r;
+}
+
+function nflPlayoffColor(r: string | null): string {
+  if (!r) return MUTED;
+  if (r === "Champion") return "#facc15";
+  if (r === "Super Bowl") return "#fb923c";
+  return GREEN;
+}
+
+function nflPlayoffLabel(r: string | null): string {
+  if (!r) return "Missed Playoffs";
+  if (r === "Champion") return "🏆 Super Bowl Champions!";
+  return `Lost in the ${r === "Wild Card" || r === "Divisional" ? `${r} Round` : r}`;
 }
 
 export async function GET(req: NextRequest) {
@@ -147,14 +162,28 @@ export async function GET(req: NextRequest) {
   }
 
   if (parsed.mode === "solo") {
-    const { pg, sg, sf, pf, c, w, l, r } = parsed.data;
-    const players = [
-      { pos: "PG", name: pg },
-      { pos: "SG", name: sg },
-      { pos: "SF", name: sf },
-      { pos: "PF", name: pf },
-      { pos: "C", name: c },
-    ];
+    const isNfl = parsed.sport === "nfl";
+    let players: { pos: string; name: string }[];
+    let w: number;
+    let l: number;
+    let t = 0;
+    let r: string | null;
+    if (parsed.sport === "nfl") {
+      ({ w, l, t, r } = parsed.data);
+      players = NFL_SLOT_LABELS.map((pos, i) => ({ pos, name: parsed.data.rs[i] ?? "—" }));
+    } else {
+      const { pg, sg, sf, pf, c } = parsed.data;
+      ({ w, l, r } = parsed.data);
+      players = [
+        { pos: "PG", name: pg },
+        { pos: "SG", name: sg },
+        { pos: "SF", name: sf },
+        { pos: "PF", name: pf },
+        { pos: "C", name: c },
+      ];
+    }
+    const rowGap = isNfl ? "9px" : "16px";
+    const nameSize = isNfl ? "20px" : "22px";
 
     return new ImageResponse(
       (
@@ -216,13 +245,13 @@ export async function GET(req: NextRequest) {
               >
                 Your Roster
               </span>
-              <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                {players.map(({ pos, name }) => (
-                  <div key={pos} style={{ display: "flex", alignItems: "baseline", gap: "16px" }}>
-                    <span style={{ color: MUTED, fontSize: "18px", fontWeight: 600, width: "44px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: rowGap }}>
+                {players.map(({ pos, name }, i) => (
+                  <div key={`${pos}-${i}`} style={{ display: "flex", alignItems: "baseline", gap: "16px" }}>
+                    <span style={{ color: MUTED, fontSize: "18px", fontWeight: 600, width: "56px" }}>
                       {pos}
                     </span>
-                    <span style={{ color: WHITE, fontSize: "22px", fontWeight: 500 }}>{name}</span>
+                    <span style={{ color: WHITE, fontSize: nameSize, fontWeight: 500 }}>{name}</span>
                   </div>
                 ))}
               </div>
@@ -264,6 +293,8 @@ export async function GET(req: NextRequest) {
                   <span style={{ color: GREEN, fontSize: "64px", fontWeight: 700 }}>{w}</span>
                   <span style={{ color: MUTED, fontSize: "36px" }}>–</span>
                   <span style={{ color: RED, fontSize: "64px", fontWeight: 700 }}>{l}</span>
+                  {t ? <span style={{ color: MUTED, fontSize: "36px" }}>–</span> : null}
+                  {t ? <span style={{ color: WHITE, fontSize: "64px", fontWeight: 700 }}>{t}</span> : null}
                 </div>
               </div>
 
@@ -294,13 +325,13 @@ export async function GET(req: NextRequest) {
                 </span>
                 <span
                   style={{
-                    color: playoffColor(r),
+                    color: isNfl ? nflPlayoffColor(r) : playoffColor(r),
                     fontSize: "26px",
                     fontWeight: 700,
                     textAlign: "center",
                   }}
                 >
-                  {playoffLabel(r)}
+                  {isNfl ? nflPlayoffLabel(r) : playoffLabel(r)}
                 </span>
               </div>
             </div>
@@ -318,6 +349,8 @@ export async function GET(req: NextRequest) {
 
   // 2-player mode
   const { p1, p2, s1, s2, winner } = parsed.data;
+  const isNfl2p = parsed.sport === "nfl";
+  const slotLabels: readonly string[] = isNfl2p ? NFL_SLOT_LABELS : POSITIONS;
 
   return new ImageResponse(
     (
@@ -419,13 +452,13 @@ export async function GET(req: NextRequest) {
               >
                 {label}
               </span>
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {POSITIONS.map((pos, i) => (
-                  <div key={pos} style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
-                    <span style={{ color: MUTED, fontSize: "15px", fontWeight: 600, width: "36px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: isNfl2p ? "5px" : "10px" }}>
+                {slotLabels.map((pos, i) => (
+                  <div key={`${pos}-${i}`} style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
+                    <span style={{ color: MUTED, fontSize: "15px", fontWeight: 600, width: "44px" }}>
                       {pos}
                     </span>
-                    <span style={{ color: WHITE, fontSize: "18px" }}>{names[i] ?? "—"}</span>
+                    <span style={{ color: WHITE, fontSize: isNfl2p ? "16px" : "18px" }}>{names[i] ?? "—"}</span>
                   </div>
                 ))}
               </div>

@@ -30,6 +30,8 @@ export async function fetchTeamPlayers(
 ): Promise<{ players: NBAPlayer[] }> {
   const params = new URLSearchParams();
   if (options?.activeOnly) params.set("active_only", "true");
+  // Cache-key version: v2 adds pts/reb/ast for the draft dropdown (don't reuse older cached lists).
+  params.set("v", "2");
   const qs = params.toString();
   const url = `${NBA_SERVICE_URL}/teams/${teamId}/players${qs ? `?${qs}` : ""}`;
   const res = await fetch(url, {
@@ -77,6 +79,10 @@ export type NBAPlayer = {
   name: string;
   position: string;
   jersey?: string;
+  /** Per-game headline stats for the draft dropdown (absent when no stats). */
+  pts?: number;
+  reb?: number;
+  ast?: number;
 };
 
 export type PlayerStats = {

@@ -78,6 +78,46 @@ DATABASE_URL="<your-neon-connection-string>" python seed_db.py
 
 The seed script is idempotent (safe to re-run). It pulls historical rosters from Basketball Reference and supplements with live team roster pages to capture injured/inactive players.
 
+## NFL (Football)
+
+Football runs alongside basketball (toggle on the home page). Same two processes: the Python
+service serves NFL data under `/nfl/...`, and the Next.js app serves `/nfl/solo` and
+`/nfl/game/[id]`.
+
+**Run locally** — same two terminals as above. `main.py` doesn't load `.env.local` itself, so
+export it first:
+
+```bash
+cd nba-service
+export $(grep ^DATABASE_URL= .env.local | xargs)
+.venv/bin/uvicorn main:app --reload --port 8000
+```
+
+**Data.** NFL data comes from [nflverse](https://github.com/nflverse/nflverse-data) (free CSVs:
+stats 1999+, rosters, draft picks) plus current Madden ratings for rookies only. It's seeded into
+the `nfl_*` tables (`nba-service/nfl_schema.sql`). Pro-Football-Reference can't be scraped (it's
+behind a Cloudflare challenge), so 1980-1998 is a planned manual-CSV backfill.
+
+```bash
+cd nba-service
+python seed_nfl.py                  # full seed, 1999 → current season (~1 min)
+python seed_nfl.py --current-only   # weekly refresh: rosters, current stats, rookies
+```
+
+The weekly refresh runs automatically via `.github/workflows/nfl-weekly-refresh.yml` (Tuesdays,
+needs the `DATABASE_URL` repo secret), and can be triggered by hand from the Actions tab.
+
+**Simulation.** `lib/nfl-sim/` is a drive-by-drive engine (seeded, replayable). Ratings are
+relative to the league average of the same seasons, with no ceiling. Calibrate after changing
+rating weights:
+
+```bash
+python nba-service/export_nfl_backtest.py /tmp/nfl_backtest.json
+npx tsx scripts/backtest_nfl.ts /tmp/nfl_backtest.json   # want slope ≈ 1.0, high r
+```
+
+**Tests:** `npm test` (TypeScript) and `nba-service/.venv/bin/python -m pytest nba-service/tests`.
+
 ## Project structure
 
 - `app/` – Next.js App Router (pages, API routes)
@@ -87,4 +127,8 @@ The seed script is idempotent (safe to re-run). It pulls historical rosters from
 - `server.js` – Custom Node server (Next.js + Socket.io)
 - `nba-service/` – Python FastAPI service (teams, rosters, player stats)
 - `nba-service/seed_db.py` – One-time DB seeding script (run locally only)
-- `nba-service/schema.sql` – Postgres schema
+- `nba-service/schema.sql` – Postgres schema (NBA)
+- `nba-service/nfl_schema.sql`, `seed_nfl.py`, `nfl_router.py` – NFL schema, seed, and `/nfl` endpoints
+- `lib/nfl-rules.js` – NFL draft rules shared by the browser and the socket server
+- `lib/nfl-sim/` – NFL simulation engine (ratings, drive engine, season mode)
+- `app/nfl/`, `components/nfl/` – NFL pages and components

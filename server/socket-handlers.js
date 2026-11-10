@@ -8,12 +8,14 @@ const {
   spinWheel,
   clearWheelTeam,
   pickPlayer,
+  lockDefense,
   setSimulationResult,
   rematchGame,
   deleteGame,
   getGameCount,
   POSITIONS,
 } = require("./game-store.js");
+const { NFL_PLAYER_SLOTS } = require("../lib/nfl-rules.js");
 
 function getPlayerNumber(game, socketId) {
   if (game.player1?.socketId === socketId) return 1;
@@ -204,14 +206,20 @@ function withGameActionLock(gameId, action) {
 
 function registerSocketHandlers(io) {
   io.on("connection", (socket) => {
-    socket.on("create_game", (callback) => {
+    socket.on("create_game", (payloadOrCallback, maybeCallback) => {
+      // Backwards compatible: older clients emit create_game(callback) with no payload.
+      const callback = typeof payloadOrCallback === "function" ? payloadOrCallback : maybeCallback;
+      const sport =
+        payloadOrCallback && typeof payloadOrCallback === "object" && payloadOrCallback.sport === "nfl"
+          ? "nfl"
+          : "nba";
       if (!checkRateLimit(socket.id, "create_game")) {
         if (typeof callback === "function") callback({ error: "Too many requests" });
         return;
       }
       try {
         leaveOtherGameRooms(socket);
-        const game = createGame();
+        const game = createGame(sport);
         socket.join(game.gameId);
         const updated = joinGame(game.gameId, socket.id, 1);
         const reconnectToken = rotateReconnectToken(game.gameId, 1);
@@ -538,7 +546,7 @@ function registerSocketHandlers(io) {
           if (typeof callback === "function") callback({ error: "Invalid playerName" });
           return;
         }
-        if (!POSITIONS.includes(position)) {
+        if (!POSITIONS.includes(position) && !NFL_PLAYER_SLOTS.includes(position)) {
           if (typeof callback === "function")
             callback({ error: "Invalid position" });
           return;
@@ -570,6 +578,11 @@ function registerSocketHandlers(io) {
             if (typeof callback === "function") callback({ error: "Not your turn" });
             return;
           }
+          const sportPositions = game.sport === "nfl" ? NFL_PLAYER_SLOTS : POSITIONS;
+          if (!sportPositions.includes(position)) {
+            if (typeof callback === "function") callback({ error: "Invalid position" });
+            return;
+          }
 
           const updated = pickPlayer(
             gameId,
@@ -595,6 +608,37 @@ function registerSocketHandlers(io) {
         });
       }
     );
+
+    // NFL: lock the landed team's defense (optionally a chosen season in all-time mode).
+    socket.on("lock_defense", (payload, callback) => {
+      if (!checkRateLimit(socket.id, "pick")) {
+        if (typeof callback === "function") callback({ error: "Too many requests" });
+        return;
+      }
+      const { gameId: payloadGameId, season } = payload || {};
+      if (payloadGameId && !isValidGameId(payloadGameId)) {
+        if (typeof callback === "function") callback({ error: "Invalid game ID" });
+        return;
+      }
+      if (!Number.isInteger(season)) {
+        if (typeof callback === "function") callback({ error: "Invalid season" });
+        return;
+      }
+      const ctx = resolveGameForAction(socket, payloadGameId, callback);
+      if (!ctx) return;
+      const { gameId, pn } = ctx;
+      withGameActionLock(gameId, async () => {
+        const result = lockDefense(gameId, pn, season);
+        if (result.error) {
+          if (typeof callback === "function") callback({ error: result.error });
+          return;
+        }
+        if (typeof callback === "function") callback({ game: result.game });
+        broadcastGameState(io, gameId, result.game);
+      }).catch((err) => {
+        if (typeof callback === "function") callback({ error: err?.message || "Failed to lock defense" });
+      });
+    });
 
     socket.on("leave_game", ({ gameId }, callback) => {
       const targetGameId =

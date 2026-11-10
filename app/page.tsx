@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSocket } from "@/lib/socket";
 import { persistMultiplayerSession } from "@/lib/multiplayer-session";
@@ -13,12 +13,31 @@ export default function LobbyPage() {
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
   const [playerMode, setPlayerMode] = useState<"1p" | "2p">("1p");
+  const [sport, setSport] = useState<"nba" | "nfl">("nba");
+
+  // Remember the last sport picked (per-browser convenience only).
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("knowball:sport") === "nfl") setSport("nfl");
+    } catch {
+      // storage unavailable
+    }
+  }, []);
+  const chooseSport = (next: "nba" | "nfl") => {
+    setSport(next);
+    try {
+      localStorage.setItem("knowball:sport", next);
+    } catch {
+      // storage unavailable
+    }
+  };
+  const gamePath = (s: string | undefined, id: string) => (s === "nfl" ? `/nfl/game/${id}` : `/game/${id}`);
 
   const handleCreate = () => {
     setError("");
     setCreating(true);
     const socket = getSocket();
-    socket.emit("create_game", (res: { gameId?: string; game?: GameState; playerNumber?: number; reconnectToken?: string; error?: string }) => {
+    socket.emit("create_game", { sport }, (res: { gameId?: string; game?: GameState; playerNumber?: number; reconnectToken?: string; error?: string }) => {
       setCreating(false);
       if (res.error) {
         setError(res.error);
@@ -29,7 +48,7 @@ export default function LobbyPage() {
           playerNumber: res.playerNumber ?? 1,
           reconnectToken: res.reconnectToken,
         });
-        router.push(`/game/${res.gameId}`);
+        router.push(gamePath(res.game?.sport ?? sport, res.gameId));
       }
     });
   };
@@ -55,7 +74,7 @@ export default function LobbyPage() {
           playerNumber: res.playerNumber,
           reconnectToken: res.reconnectToken,
         });
-        router.push(`/game/${code}`);
+        router.push(gamePath(res.game.sport, code));
       }
     });
   };
@@ -97,32 +116,28 @@ export default function LobbyPage() {
 
           {/* Sport toggle */}
           <div className="relative flex rounded-full border border-zinc-700 p-1">
-            <div className="pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-orange-600" />
+            <div className={`pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-orange-600 transition-transform duration-200 ease-in-out${sport === "nfl" ? " translate-x-full" : ""}`} />
             <button
               type="button"
-              className="relative z-10 flex-1 py-1.5 px-4 text-sm font-medium text-white"
+              onClick={() => chooseSport("nba")}
+              className={`relative z-10 flex-1 py-1.5 px-4 text-sm font-medium transition-colors duration-200 ${sport === "nba" ? "text-white" : "text-zinc-400"}`}
             >
               Basketball
             </button>
-            <div className="group relative z-10 flex-1">
-              <button
-                type="button"
-                disabled
-                className="w-full py-1.5 px-4 text-sm font-medium text-zinc-500 cursor-not-allowed group-hover:opacity-0 transition-opacity"
-              >
-                Football
-              </button>
-              <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs font-semibold text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                🚧 Coming Soon! 🚧
-              </span>
-            </div>
+            <button
+              type="button"
+              onClick={() => chooseSport("nfl")}
+              className={`relative z-10 flex-1 py-1.5 px-4 text-sm font-medium transition-colors duration-200 ${sport === "nfl" ? "text-white" : "text-zinc-400"}`}
+            >
+              Football
+            </button>
           </div>
         </div>
 
         {playerMode === "1p" ? (
           <button
             type="button"
-            onClick={() => router.push("/solo")}
+            onClick={() => router.push(sport === "nfl" ? "/nfl/solo" : "/solo")}
             className="w-full py-3.5 px-6 rounded-lg bg-orange-600 hover:bg-orange-500 font-semibold text-lg transition"
           >
             Start Game

@@ -31,9 +31,18 @@ from basketball_reference_web_scraper.data import Team, Position
 from nba_api.stats.static import teams as static_teams
 from nba_api.stats.static import players as static_players
 
-# Season range: 1980-81 through 2025-26
-SEASON_START_END_YEAR = 1981   # first season to fetch (1980-81)
-SEASON_STOP_END_YEAR  = 2026   # last season to fetch  (2025-26)
+import datetime as _dt
+
+
+def _current_season_end_year(today=None) -> int:
+    """NBA season in progress (or upcoming, Jul-Sep), as its end year. Nov 2026 → 2027 (2026-27)."""
+    today = today or _dt.date.today()
+    return today.year + 1 if today.month >= 7 else today.year
+
+
+# Season range: 1980-81 through the current season (computed, so it never goes stale)
+SEASON_START_END_YEAR = 1981                         # first season to fetch (1980-81)
+SEASON_STOP_END_YEAR  = _current_season_end_year()   # last season to fetch (current)
 
 # Seconds to wait between basketball-reference requests (be respectful)
 REQUEST_DELAY = 3.0
@@ -138,6 +147,26 @@ def build_player_id_lookup():
     return exact, normalized
 
 
+# Players nba_api's bundled list doesn't know yet (recent rookies) get a Basketball-Reference
+# based id instead of being skipped. Once assigned, a bref id is kept on later runs even after
+# nba_api adds the player, so nobody appears twice.
+_EXISTING_BREF_IDS: set = set()
+
+
+def load_existing_bref_ids(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT player_id FROM roster_players WHERE player_id LIKE 'bref-%%'")
+        _EXISTING_BREF_IDS.update(r[0] for r in cur.fetchall())
+
+
+def resolve_player_id(name: str, slug: "str | None", exact: dict, normalized: dict) -> "str | None":
+    """nba_api id when known, else a stable 'bref-<slug>' id (None only if neither exists)."""
+    bref_id = f"bref-{slug}" if slug else None
+    if bref_id and bref_id in _EXISTING_BREF_IDS:
+        return bref_id
+    return lookup_player_id(name, exact, normalized) or bref_id
+
+
 def lookup_player_id(name: str, exact: dict, normalized: dict) -> "str | None":
     """Try exact match first, then normalized (accent/suffix stripped)."""
     pid = exact.get(name.strip().lower())
@@ -221,7 +250,7 @@ def seed_one_season(conn, end_year: int, full_name_to_id: dict, exact_lookup: di
         if not player_name:
             continue
 
-        nba_id = lookup_player_id(player_name, exact_lookup, norm_lookup)
+        nba_id = resolve_player_id(player_name, row.get("slug"), exact_lookup, norm_lookup)
         if nba_id is None:
             continue
 
@@ -258,7 +287,7 @@ def seed_one_season(conn, end_year: int, full_name_to_id: dict, exact_lookup: di
             continue
         seen.add(key)
 
-        nba_id = lookup_player_id(player_name, exact_lookup, norm_lookup)
+        nba_id = resolve_player_id(player_name, row.get("slug"), exact_lookup, norm_lookup)
         if nba_id is None:
             unmatched_count += 1
             continue
@@ -499,8 +528,8 @@ _BREF_ROSTER_HEADERS = {
     ),
 }
 
-CURRENT_ROSTER_SEASON = "2025-26"
-CURRENT_ROSTER_END_YEAR = 2026
+CURRENT_ROSTER_END_YEAR = SEASON_STOP_END_YEAR
+CURRENT_ROSTER_SEASON = f"{CURRENT_ROSTER_END_YEAR - 1}-{str(CURRENT_ROSTER_END_YEAR)[-2:]}"
 
 
 def _parse_bref_roster_page(html: str) -> list[dict]:
@@ -526,6 +555,7 @@ def _parse_bref_roster_page(html: str) -> list[dict]:
             continue  # header row or empty row
 
         name = name_m.group(1).strip()
+        slug_m = re.search(r"""href=['"]/players/\w/([\w.]+)\.html['"]""", row)
 
         pos_m = re.search(r'data-stat="pos"[^>]*csk="(\d+)"', row)
         position = _BREF_POS_CSK_TO_SHORT.get(pos_m.group(1) if pos_m else "", "SF")
@@ -533,7 +563,8 @@ def _parse_bref_roster_page(html: str) -> list[dict]:
         jersey_m = re.search(r'data-stat="number"[^>]*>\s*([^<\s]*)\s*</th>', row)
         jersey = (jersey_m.group(1).strip() if jersey_m else "").replace("&nbsp;", "")
 
-        players.append({"name": name, "position": position, "jersey": jersey})
+        players.append({"name": name, "position": position, "jersey": jersey,
+                        "slug": slug_m.group(1) if slug_m else None})
 
     return players
 
@@ -581,7 +612,7 @@ def seed_current_rosters_from_bref(
 
         rows_to_insert = []
         for p in players:
-            nba_id = lookup_player_id(p["name"], exact_lookup, norm_lookup)
+            nba_id = resolve_player_id(p["name"], p.get("slug"), exact_lookup, norm_lookup)
             if nba_id is None:
                 total_unmatched += 1
                 print(f"    unmatched: {p['name']!r}")
@@ -637,7 +668,24 @@ def seed_current_rosters_from_bref(
 
 
 def main():
+    import argparse
+
+    global SEASON_START_END_YEAR
+    parser = argparse.ArgumentParser(description="Seed NBA data (idempotent).")
+    parser.add_argument(
+        "--from", dest="from_year", type=int, default=SEASON_START_END_YEAR,
+        help="first season END year to fetch (e.g. 2026 = 2025-26). Use for quick refreshes.",
+    )
+    args = parser.parse_args()
+    SEASON_START_END_YEAR = args.from_year
+
     database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env.local")
+        if os.path.exists(env_file):
+            for line in open(env_file):
+                if line.startswith("DATABASE_URL="):
+                    database_url = line.split("=", 1)[1].strip().strip("'\"")
     if not database_url:
         raise SystemExit("ERROR: DATABASE_URL environment variable not set.")
 
@@ -646,6 +694,8 @@ def main():
 
     print("Applying schema...")
     apply_schema(conn)
+
+    load_existing_bref_ids(conn)
 
     print("Seeding teams...")
     full_name_to_id = seed_teams(conn)

@@ -42,6 +42,8 @@ export function createEmptyRoster(): Roster {
 
 export type GameState = {
   gameId: string;
+  /** Set by the socket server; absent on games created before NFL launched. */
+  sport?: "nba" | "nfl";
   phase: GamePhase;
   gameMode: GameMode;
   player1: { socketId: string; name?: string } | null;

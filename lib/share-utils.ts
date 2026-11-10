@@ -1,5 +1,6 @@
 import type { Roster } from "@/lib/game-types";
 import { POSITIONS } from "@/lib/game-types";
+import { NFL_SLOTS, type NflRoster } from "@/lib/nfl-types";
 
 const PROD_BASE_URL = "https://knowball.gg";
 const SHARE_BASE_URL = (
@@ -29,9 +30,31 @@ export type TwoPlayerShareData = {
   winner: 1 | 2 | null;
 };
 
+/** NFL payloads carry s: "nfl". Rosters are the 8 slots in NFL_SLOTS order. */
+export type NflSoloShareData = {
+  s: "nfl";
+  rs: string[];
+  w: number;
+  l: number;
+  t: number;
+  r: string | null; // playoff result: round lost in, "Champion", or null (missed)
+};
+
+export type NflTwoPlayerShareData = {
+  s: "nfl";
+  p1: string[];
+  p2: string[];
+  s1: number;
+  s2: number;
+  winner: 1 | 2 | null;
+  ot?: boolean;
+};
+
 export type ShareData =
-  | { mode: "solo"; data: SoloShareData }
-  | { mode: "2p"; data: TwoPlayerShareData };
+  | { mode: "solo"; sport: "nba"; data: SoloShareData }
+  | { mode: "2p"; sport: "nba"; data: TwoPlayerShareData }
+  | { mode: "solo"; sport: "nfl"; data: NflSoloShareData }
+  | { mode: "2p"; sport: "nfl"; data: NflTwoPlayerShareData };
 
 function encodeData(obj: unknown): string {
   const json = JSON.stringify(obj);
@@ -88,8 +111,14 @@ export function decodeShareData(d: string): ShareData | null {
     return null;
   }
 
-  if ("pg" in parsed) return { mode: "solo", data: parsed as SoloShareData };
-  if ("p1" in parsed) return { mode: "2p", data: parsed as TwoPlayerShareData };
+  if ((parsed as { s?: unknown }).s === "nfl") {
+    if ("rs" in parsed) return { mode: "solo", sport: "nfl", data: parsed as NflSoloShareData };
+    if ("p1" in parsed) return { mode: "2p", sport: "nfl", data: parsed as NflTwoPlayerShareData };
+    return null;
+  }
+  // Links shared before NFL launched have no sport marker → NBA.
+  if ("pg" in parsed) return { mode: "solo", sport: "nba", data: parsed as SoloShareData };
+  if ("p1" in parsed) return { mode: "2p", sport: "nba", data: parsed as TwoPlayerShareData };
   return null;
 }
 
@@ -127,4 +156,47 @@ export function encode2PShareData(
 
 export function buildShareUrl(mode: "solo" | "2p", encodedData: string): string {
   return `${resolveBaseUrl()}/share?mode=${mode}&d=${encodedData}`;
+}
+
+/** Display names for the 8 NFL slots, in NFL_SLOTS order. */
+export function nflRosterNames(roster: NflRoster): string[] {
+  return NFL_SLOTS.map((slot) => {
+    if (slot === "TEAM_DEF") {
+      const d = roster.TEAM_DEF;
+      return d.teamId ? `${d.season} ${d.teamName ?? d.teamId} D` : "—";
+    }
+    return roster[slot].playerName ?? "—";
+  });
+}
+
+export function encodeNflSoloShareData(
+  roster: NflRoster,
+  result: { wins: number; losses: number; ties: number; playoffResult: string | null }
+): string {
+  const data: NflSoloShareData = {
+    s: "nfl",
+    rs: nflRosterNames(roster),
+    w: result.wins,
+    l: result.losses,
+    t: result.ties,
+    r: result.playoffResult,
+  };
+  return encodeData(data);
+}
+
+export function encodeNfl2PShareData(
+  roster1: NflRoster,
+  roster2: NflRoster,
+  result: { team1Score: number; team2Score: number; winner: 1 | 2 | null; overtime?: boolean }
+): string {
+  const data: NflTwoPlayerShareData = {
+    s: "nfl",
+    p1: nflRosterNames(roster1),
+    p2: nflRosterNames(roster2),
+    s1: result.team1Score,
+    s2: result.team2Score,
+    winner: result.winner,
+    ot: result.overtime || undefined,
+  };
+  return encodeData(data);
 }
