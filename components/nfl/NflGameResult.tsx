@@ -5,6 +5,7 @@ import type { NflRoster, NflTeam } from "@/lib/nfl-types";
 import { UNIT_LABELS, quarterLabel, unitGrade, type NflSimulationResponse } from "@/lib/nfl-client";
 import { buildShareUrl, encodeNfl2PShareData } from "@/lib/share-utils";
 import { NflRosterList } from "./NflRosterList";
+import { NflBoxScore } from "./NflBoxScore";
 
 type Props = {
   result: NflSimulationResponse;
@@ -101,6 +102,17 @@ export function NflGameResult({ result, roster1, roster2, teams, myNumber, onRem
           <span className="text-zinc-300 tabular-nums text-right">{result.teamStats[2].turnovers}</span>
         </div>
       </section>
+
+      {result.boxScore && (
+        <section className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {([1, 2] as const).map((t) => (
+            <div key={t} className="rounded-lg bg-zinc-900 p-4">
+              <h3 className="text-sm font-medium text-orange-400 mb-3">Player {t} box score</h3>
+              <NflBoxScore box={result.boxScore![t]} />
+            </div>
+          ))}
+        </section>
+      )}
 
       <section className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {[

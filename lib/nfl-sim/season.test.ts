@@ -103,4 +103,72 @@ describe("simulateSeason", () => {
       for (const g of r.playoffGames) expect(PLAYOFF_ROUNDS).toContain(g.round);
     }
   });
+
+  it("takes the place of the team defense's franchise", () => {
+    const p = profileFromUnits("T", 0.5, 0.5);
+    const r = simulateSeason(p, league, { seed: 4, expectedWinsSims: 10, homeTeamId: "CHI" });
+    expect(r.replacedTeam).toBe("Chicago Bears");
+    expect(r.division).toBe("NFC North");
+    expect(r.conference).toBe("NFC");
+    expect(r.divisionStandings.map((d) => d.name)).not.toContain("Chicago Bears");
+  });
+
+  it("falls back to a random team for an unknown franchise", () => {
+    const p = profileFromUnits("T", 0.5, 0.5);
+    const r = simulateSeason(p, league, { seed: 4, expectedWinsSims: 10, homeTeamId: "XYZ" });
+    expect(r.replacedTeam).toBe(simulateSeason(p, league, { seed: 4, expectedWinsSims: 10 }).replacedTeam);
+  });
+});
+
+describe("season stats", () => {
+  it("totals the user's regular-season box scores and names a stat MVP", async () => {
+    const { buildTeamProfile } = await import("./ratings");
+    const line = (pos: string, extra: object) => ({
+      playerId: pos, teamId: "KC", position: pos, gp: 16, gs: 16, seasons: [2020], statsTeamId: "KC",
+      passing: null, rushing: null, receiving: null, defense: null,
+      league: {
+        passing: { cmp: 21, att: 33, yds: 235, td: 1.5, int: 0.8, sacked: 2.2 },
+        rushing: { att: 15, yds: 65, td: 0.45, fumblesLost: 0.12 },
+        receiving: { tgt: 6, rec: 4, yds: 50, td: 0.3 },
+        defense: { tackles: 4, sacks: 0.3, int: 0.08, passesDefended: 0.4, forcedFumbles: 0.06, tacklesForLoss: 0.35 },
+      },
+      source: "db", ...extra,
+    });
+    const wr = (name: string) => ({ name, stats: line("WR", { receiving: { tgt: 9, rec: 6, yds: 85, td: 0.6 } }) });
+    const roster: any = {
+      name: "T",
+      QB: { name: "QB One", stats: line("QB", { passing: { cmp: 25, att: 36, yds: 290, td: 2.5, int: 0.5, sacked: 1.5 }, rushing: { att: 3, yds: 15, td: 0.1, fumblesLost: 0.1 } }) },
+      RB: { name: "RB One", stats: line("RB", { rushing: { att: 18, yds: 90, td: 0.8, fumblesLost: 0.1 }, receiving: { tgt: 3, rec: 2, yds: 20, td: 0.1 } }) },
+      WR1: wr("WR A"), WR2: wr("WR B"), WR3: wr("WR C"), TE: wr("TE One"),
+      DEF_CAPTAIN: { name: "LB One", stats: line("LB", { defense: { tackles: 6, sacks: 0.8, int: 0.1, passesDefended: 0.5, forcedFumbles: 0.1, tacklesForLoss: 0.8 } }) },
+      TEAM_DEF: { teamId: "KC", season: 2020, teamName: "Chiefs", games: 16, pointsAllowed: 19, yardsAllowed: 320, passYardsAllowed: 210, rushYardsAllowed: 110,
+        takeaways: 1.6, sacks: 2.8, playsAllowed: 62, source: "db",
+        league: { pointsAllowed: 23, yardsAllowed: 340, passYardsAllowed: 230, rushYardsAllowed: 110, takeaways: 1.4, sacks: 2.5, playsAllowed: 63 } },
+    };
+    const r = simulateSeason(buildTeamProfile(roster), league, { seed: 11, expectedWinsSims: 10, homeTeamId: "KC" });
+    expect(r.seasonStats).not.toBeNull();
+    const s = r.seasonStats!;
+    expect(s.passing.name).toBe("QB One");
+    expect(s.passing.att).toBeGreaterThan(17 * 20);
+    expect(s.receiving.map((x) => x.name)).toEqual(expect.arrayContaining(["WR A", "TE One", "RB One"]));
+    // Season TD passes = sum of receiving TDs.
+    expect(s.receiving.reduce((t, x) => t + x.td, 0)).toBe(s.passing.td);
+    expect(r.statMvp?.name).toBeTruthy();
+    if (r.madePlayoffs) expect(r.playoffStats).not.toBeNull();
+  });
+});
+
+describe("unlucky callout", () => {
+  it("flags seasons well below expected wins, and only those", () => {
+    const p = profileFromUnits("T", 0.9, 0.9);
+    const seasons = Array.from({ length: 120 }, (_, i) => simulateSeason(p, league, { seed: i + 1, expectedWinsSims: 40 }));
+    for (const r of seasons) {
+      const gap = r.expectedWins - (r.wins + 0.5 * r.ties);
+      expect(r.unlucky).toBe(gap >= 2.5);
+      if (r.unlucky) expect(r.milestones[0]).toMatch(/^Unlucky! Expected \d+\.\d wins$/);
+    }
+    // Rare but real for a strong team.
+    const rate = seasons.filter((r) => r.unlucky).length / seasons.length;
+    expect(rate).toBeLessThan(0.15);
+  });
 });

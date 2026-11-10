@@ -14,6 +14,7 @@ import {
 } from "@/lib/nfl-client";
 import { buildShareUrl, encodeNflSoloShareData } from "@/lib/share-utils";
 import { NflRosterList } from "./NflRosterList";
+import { NflBoxScore } from "./NflBoxScore";
 
 type Props = {
   result: NflSeasonResponse;
@@ -40,7 +41,7 @@ export function NflSeasonReveal({ result, roster, teams, onPlayAgain }: Props) {
   const [showSchedule, setShowSchedule] = useState(false);
   const headline = playoffHeadline(result.playoffResult);
   // The headline already says how the playoffs went; chips add the extra flavor only.
-  const milestones = result.milestones.filter((m) => !/playoffs|champions|Made the/i.test(m));
+  const milestones = result.milestones.filter((m) => !/playoffs|champions|Made the|^Unlucky!/i.test(m));
   const ppg = (v: number) => (v / 17).toFixed(1);
 
   const handleShare = () => {
@@ -68,6 +69,11 @@ export function NflSeasonReveal({ result, roster, teams, onPlayAgain }: Props) {
             {record(result.wins, result.losses, result.ties)}
           </p>
           <p className={`mt-2 font-funnel-display text-xl font-semibold ${headline.tone}`}>{headline.text}</p>
+          {result.unlucky && (
+            <p className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-amber-600/60 bg-amber-900/30 px-3 py-1 text-sm text-amber-200">
+              😬 Unlucky! This roster was expected to win {result.expectedWins.toFixed(1)} games
+            </p>
+          )}
           {milestones.length > 0 && (
             <div className="mt-4 flex flex-wrap justify-center gap-2">
               {milestones.map((m) => (
@@ -90,7 +96,8 @@ export function NflSeasonReveal({ result, roster, teams, onPlayAgain }: Props) {
             </div>
           </div>
           <p className="mt-4 text-xs text-zinc-500">
-            Your team took the {result.replacedTeam}&apos; place in the {result.season} league. Expected wins: {result.expectedWins}.
+            Your defense&apos;s franchise put you in the {result.division}, in place of the {result.replacedTeam}.
+            Expected wins: {result.expectedWins}.
           </p>
         </section>
 
@@ -130,7 +137,15 @@ export function NflSeasonReveal({ result, roster, teams, onPlayAgain }: Props) {
         <section className="rounded-lg bg-zinc-900 p-4">
           <h2 className="font-funnel-display text-lg font-semibold mb-1">Team breakdown</h2>
           <p className="text-xs text-zinc-500 mb-3">
-            MVP: <span className="text-white">{result.mvp.name}</span> ({SLOT_SHORT_LABELS[result.mvp.slot as keyof typeof SLOT_SHORT_LABELS] ?? result.mvp.slot})
+            {result.statMvp ? (
+              <>
+                Season MVP: <span className="text-white">{result.statMvp.name}</span> · {result.statMvp.line}
+              </>
+            ) : (
+              <>
+                MVP: <span className="text-white">{result.mvp.name}</span> ({SLOT_SHORT_LABELS[result.mvp.slot as keyof typeof SLOT_SHORT_LABELS] ?? result.mvp.slot})
+              </>
+            )}
           </p>
           <ul className="space-y-2">
             {UNIT_LABELS.map(({ key, label }) => {
@@ -150,6 +165,14 @@ export function NflSeasonReveal({ result, roster, teams, onPlayAgain }: Props) {
             })}
           </ul>
         </section>
+
+        {/* Season stats */}
+        {result.seasonStats && (
+          <section className="rounded-lg bg-zinc-900 p-4">
+            <h2 className="font-funnel-display text-lg font-semibold mb-3">Season stats</h2>
+            <NflBoxScore box={result.seasonStats} perGame={17} />
+          </section>
+        )}
 
         {/* Division */}
         <section className="rounded-lg bg-zinc-900 p-4">

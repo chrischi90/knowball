@@ -256,3 +256,96 @@ describe("key moment text", () => {
     }
   });
 });
+
+describe("box score layer", () => {
+  const a = buildTeamProfile(roster("Aces", SUPER));
+  const b = buildTeamProfile(roster("Bolts", AVERAGE));
+
+  it("never changes the game: same seed → same outcomes with or without stats", () => {
+    const noUsage = (p: typeof a) => ({ ...p, usage: undefined });
+    for (let seed = 1; seed <= 100; seed++) {
+      const withStats = simulateGame(a, b, { seed });
+      const fast = simulateGame(a, b, { seed, fast: true });
+      const generic = simulateGame(noUsage(a), noUsage(b), { seed });
+      for (const other of [fast, generic]) {
+        expect(other.team1Score).toBe(withStats.team1Score);
+        expect(other.team2Score).toBe(withStats.team2Score);
+        expect(other.drives.map((d) => d.outcome)).toEqual(withStats.drives.map((d) => d.outcome));
+      }
+      expect(fast.boxScore).toBeUndefined();
+    }
+  });
+
+  it("box score agrees with the game it describes", () => {
+    for (let seed = 1; seed <= 100; seed++) {
+      const g = simulateGame(a, b, { seed });
+      for (const t of [1, 2] as const) {
+        const box = g.boxScore![t];
+        const offTds = g.drives.filter((d) => d.offense === t && d.outcome === "TD").length;
+        const rushTds = box.rushing.reduce((s, r) => s + r.td, 0);
+        expect(box.passing.td + rushTds).toBe(offTds);
+        expect(box.receiving.reduce((s, r) => s + r.td, 0)).toBe(box.passing.td);
+        // Interceptions thrown never exceed turnovers committed.
+        expect(box.passing.int).toBeLessThanOrEqual(g.teamStats[t].turnovers);
+        // QB passing yards are the catches' yards.
+        const recYds = box.receiving.reduce((s, r) => s + r.yds, 0);
+        expect(box.passing.yds).toBeGreaterThanOrEqual(recYds); // the rest went to unnamed teammates
+        expect(box.passing.cmp).toBeLessThanOrEqual(box.passing.att);
+        for (const r of box.receiving) expect(r.rec).toBeLessThanOrEqual(r.tgt);
+        expect(box.team.passYards + box.team.rushYards).toBe(box.team.yards);
+      }
+    }
+  });
+
+  it("produces sane volumes, and super teams put up bigger but believable numbers", () => {
+    const n = 300;
+    let supYds = 0, avgYds = 0, supQb = 0, plays = 0;
+    for (let seed = 1; seed <= n; seed++) {
+      const g = simulateGame(a, b, { seed });
+      supYds += g.boxScore![1].team.yards;
+      avgYds += g.boxScore![2].team.yards;
+      supQb += g.boxScore![1].passing.yds;
+      plays += g.boxScore![2].team.plays;
+    }
+    expect(plays / n).toBeGreaterThan(52);
+    expect(plays / n).toBeLessThan(75);
+    expect(avgYds / n).toBeGreaterThan(220);
+    expect(supYds / n).toBeGreaterThan(avgYds / n);
+    // A super team lifts its QB above his real per-game yards, but within reason.
+    const realQbYds = 235 * SUPER.qb;
+    expect(supQb / n).toBeGreaterThan(realQbYds);
+    expect(supQb / n).toBeLessThan(realQbYds * 1.4);
+  });
+
+  it("touchdown key moments include yardage", () => {
+    const texts = Array.from({ length: 30 }, (_, i) => simulateGame(a, b, { seed: i + 1 }).keyMoments.map((m) => m.text)).flat();
+    expect(texts.some((t) => /\d+-yard touchdown|from \d+ yards? out|\d+-yard field goal/.test(t))).toBe(true);
+  });
+});
+
+describe("generic opponents (season mode)", () => {
+  it("are narrated at team level, never as '<Team> QB' / '<Team> receiver'", () => {
+    const a = profileFromUnits("Atlanta Falcons", 0.2, 0);
+    const b = profileFromUnits("Arizona Cardinals", 0, 0.2);
+    for (let seed = 1; seed <= 150; seed++) {
+      for (const d of simulateGame(a, b, { seed }).drives) {
+        expect(d.text).not.toMatch(/ QB| RB| receiver/);
+        expect(d.text).not.toMatch(/by (Atlanta|Arizona)|^(Atlanta|Arizona) \\w+ intercept/);
+      }
+    }
+  });
+
+  it("caps any single receiver's target share", async () => {
+    const { targetShares } = await import("./stats");
+    const shares = targetShares({
+      qb: { name: "Q", cmpPct: 0.65, sackRate: 0.06, rushAttPg: 3, ypc: 4 },
+      receivers: [{ name: "Star", tgtPg: 20, catchRate: 0.7, ypr: 12 }, { name: "B", tgtPg: 1, catchRate: 0.6, ypr: 9 }],
+      rushers: [{ name: "R", rushAttPg: 15, ypc: 4 }],
+      captain: { name: "C", tacklesPg: 4, sacksPg: 0.3, archetype: "passRush" },
+      teamSacksPg: 2.4,
+      leagueCatchRate: 0.65,
+    });
+    const total = shares.reduce((s, o) => s + o.w, 0);
+    expect(shares[0].w / total).toBeLessThanOrEqual(0.3 + 1e-9);
+  });
+});

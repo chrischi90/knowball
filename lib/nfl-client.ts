@@ -2,7 +2,7 @@
  * Client-side NFL helpers: game-state and API response types, wheel adapter, display labels.
  */
 import type { NflRoster, NflSlot, NflTeam } from "@/lib/nfl-types";
-import type { DriveOutcome, KeyMoment, SeasonResult } from "@/lib/nfl-sim";
+import type { BoxScore, DriveOutcome, KeyMoment, SeasonResult } from "@/lib/nfl-sim";
 import type { NBATeam } from "@/lib/nba-api";
 
 export type NflGameMode = "all_time" | "active_only";
@@ -53,6 +53,7 @@ export type NflSimulationResponse = {
   keyMoments: KeyMoment[];
   drives: { quarter: number; offense: 1 | 2; outcome: DriveOutcome; score: [number, number]; text: string }[];
   teamStats: Record<1 | 2, { touchdowns: number; fieldGoals: number; turnovers: number }>;
+  boxScore?: BoxScore;
   team1: TeamSummary;
   team2: TeamSummary;
 };

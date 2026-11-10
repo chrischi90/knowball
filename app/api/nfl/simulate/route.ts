@@ -62,6 +62,7 @@ export async function POST(req: Request) {
       keyMoments: game.keyMoments,
       drives: game.drives.map(({ quarter, offense, outcome, score, text }) => ({ quarter, offense, outcome, score, text })),
       teamStats: game.teamStats,
+      boxScore: game.boxScore,
       team1: summarizeProfile(t1.profile),
       team2: summarizeProfile(t2.profile),
     });

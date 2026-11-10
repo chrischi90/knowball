@@ -11,6 +11,7 @@
  */
 import { createRng, type Rng } from "./rng";
 import type { TeamProfile } from "./ratings";
+import { StatKeeper, type BoxScore } from "./stats";
 
 /** Tunable constants. Base rates ≈ modern NFL per-drive outcomes. */
 export const CAL = {
@@ -64,6 +65,8 @@ export type GameResult = {
   drives: DriveLog[];
   keyMoments: KeyMoment[];
   teamStats: Record<1 | 2, { touchdowns: number; fieldGoals: number; turnovers: number }>;
+  /** Player box score (omitted for fast games). */
+  boxScore?: BoxScore;
 };
 
 export type GameOptions = {
@@ -164,6 +167,8 @@ export function simulateGame(team1: TeamProfile, team2: TeamProfile, options: Ga
   };
   const margin = (team: 1 | 2) => score[team - 1] - score[other(team) - 1];
   const fast = !!options.fast;
+  // Box score: own RNG stream, never consulted for outcomes.
+  const keeper = fast ? null : new StatKeeper(team1, team2, options.seed);
   const creditTd = (team: 1 | 2, name: string) => {
     const cur = tdsByPlayer.get(name) ?? { team, count: 0 };
     cur.count += 1;
@@ -203,7 +208,8 @@ export function simulateGame(team1: TeamProfile, team2: TeamProfile, options: Ga
     } else {
       const m = base[offense];
       let move = m.move + form[offense] - form[defense] * 0.5 + homeEdge(offense);
-      if (shortField[offense]) move += CAL.shortField;
+      const wasShort = shortField[offense];
+      if (wasShort) move += CAL.shortField;
       shortField[offense] = false;
       const p = driveProbabilities(move, m.secure);
       let w = [p.TD, quarter === 5 ? p.FG * CAL.otFieldGoalBoost : p.FG, p.TO, p.DOWNS, p.PUNT];
@@ -213,6 +219,9 @@ export function simulateGame(team1: TeamProfile, team2: TeamProfile, options: Ga
         w = [p.TD * 1.15, deficit <= 3 ? p.FG * 1.2 : p.FG * 0.5, p.TO * 1.1, p.DOWNS * 2.5, p.PUNT * 0.25];
       }
       const pick = (["TD", "FG", "TO", "DOWNS", "PUNT"] as const)[rng.weighted(w)];
+      const trailingLate = late && deficit >= 1;
+      const statDrive = (input: Omit<Parameters<StatKeeper["drive"]>[0], "offense" | "shortField" | "trailingLate">) =>
+        keeper?.drive({ offense, shortField: wasShort, trailingLate, ...input }) ?? null;
 
       if (pick === "TD") {
         add(offense, 6);
@@ -224,12 +233,26 @@ export function simulateGame(team1: TeamProfile, team2: TeamProfile, options: Ga
         const passing = rng.chance(Math.min(0.8, Math.max(0.4, off.passShare + 0.05)));
         if (passing) {
           const catcher = pickName(rng, off.attribution.receivers);
-          creditTd(offense, catcher);
-          if (!fast) text = `${off.attribution.qbName} finds ${catcher} for a touchdown.${conv.note}`;
+          if (!off.generic) creditTd(offense, catcher);
+          const y = statDrive({ outcome: "TD", td: { kind: "pass", receiver: catcher } })?.scoringPlayYards;
+          if (!fast) {
+            text = off.generic
+              ? `The ${off.name} score on a${y ? ` ${y}-yard` : ""} touchdown pass.${conv.note}`
+              : `${off.attribution.qbName} finds ${catcher} for a${y ? ` ${y}-yard` : ""} touchdown.${conv.note}`;
+          }
         } else {
           const runner = rng.chance(off.attribution.qbRushShare) ? off.attribution.qbName : off.attribution.rbName;
-          creditTd(offense, runner);
-          if (!fast) text = `${runner} punches it in on the ground.${conv.note}`;
+          if (!off.generic) creditTd(offense, runner);
+          const y = statDrive({ outcome: "TD", td: { kind: "rush", runner } })?.scoringPlayYards;
+          if (!fast && off.generic) {
+            text = y && y >= 10
+              ? `The ${off.name} break off a ${y}-yard touchdown run.${conv.note}`
+              : `The ${off.name} punch it in${y ? ` from ${y} yard${y === 1 ? "" : "s"} out` : ""}.${conv.note}`;
+          } else if (!fast) {
+            text = y && y >= 10
+              ? `${runner} breaks off a ${y}-yard touchdown run.${conv.note}`
+              : `${runner} punches it in${y ? ` from ${y} yard${y === 1 ? "" : "s"} out` : " on the ground"}.${conv.note}`;
+          }
         }
       } else if (pick === "FG") {
         if (rng.chance(CAL.fgMake)) {
@@ -237,11 +260,13 @@ export function simulateGame(team1: TeamProfile, team2: TeamProfile, options: Ga
           stats[offense].fieldGoals++;
           outcome = "FG";
           points = { team: offense, value: 3 };
-          if (!fast) text = `Field goal, ${off.name}.`;
+          const d = statDrive({ outcome: "FG" })?.fieldGoalDistance;
+          if (!fast) text = d ? `${d}-yard field goal, ${off.name}.` : `Field goal, ${off.name}.`;
         } else {
           outcome = "FG_MISS";
           shortField[defense] = true;
-          if (!fast) text = `Missed field goal for ${off.name}.`;
+          const d = statDrive({ outcome: "FG_MISS" })?.fieldGoalDistance;
+          if (!fast) text = `Missed${d ? ` ${d}-yard` : ""} field goal for ${off.name}.`;
         }
       } else if (pick === "TO") {
         stats[offense].turnovers++;
@@ -251,7 +276,10 @@ export function simulateGame(team1: TeamProfile, team2: TeamProfile, options: Ga
             ? def.attribution.captainArchetype === "coverage" ? 0.35 : 0.1
             : def.attribution.captainArchetype === "coverage" ? 0.1 : 0.25
         );
-        const by = captainMadeIt ? def.attribution.captainName : `the ${def.attribution.defenseName}`;
+        const by = captainMadeIt && !def.generic ? def.attribution.captainName : `the ${def.attribution.defenseName}`;
+        // Agreement: a player is singular ("intercepts"); a team name is plural ("intercept").
+        const verb = (singular: string, plural: string) => (captainMadeIt && !def.generic ? singular : plural);
+        const victim = off.generic ? `the ${off.name}` : null;
         const loser = interception
           ? off.attribution.qbName
           : pickName(rng, [
@@ -259,32 +287,41 @@ export function simulateGame(team1: TeamProfile, team2: TeamProfile, options: Ga
               { name: off.attribution.receivers[0].name, weight: 0.25 },
               { name: off.attribution.qbName, weight: 0.15 },
             ]);
+        const turnover = { kind: interception ? "int" : "fumble", player: loser, byCaptain: captainMadeIt } as const;
         if (rng.chance(CAL.defTdPerTurnover)) {
+          statDrive({ outcome: "DEF_TD", turnover });
           add(defense, 6);
           const conv = conversion(defense, late);
           add(defense, conv.pts);
           stats[defense].touchdowns++;
           outcome = "DEF_TD";
           points = { team: defense, value: 6 + conv.pts };
-          if (captainMadeIt) creditTd(defense, def.attribution.captainName);
+          if (captainMadeIt && !def.generic) creditTd(defense, def.attribution.captainName);
           if (!fast) {
             text = interception
-              ? `PICK-SIX! ${by} intercepts ${loser} and takes it to the house.${conv.note}`
-              : `${by} scoop up a ${loser} fumble and score!${conv.note}`;
+              ? `PICK-SIX! ${by.charAt(0).toUpperCase() + by.slice(1)} ${verb("intercepts", "intercept")} ${victim ?? loser} and ${verb("takes", "take")} it to the house.${conv.note}`
+              : `${by} ${verb("scoops", "scoop")} up a ${victim ? `${off.name}` : loser} fumble and ${verb("scores", "score")}!${conv.note}`;
           }
         } else {
+          statDrive({ outcome: "TO", turnover });
           outcome = "TO";
           shortField[defense] = true;
           if (!fast) {
-            text = interception ? `${by} intercept${captainMadeIt ? "s" : ""} ${loser}.` : `${loser} fumbles — recovered by ${by}.`;
+            text = interception
+              ? `${by} ${verb("intercepts", "intercept")} ${victim ?? loser}.`
+              : victim
+                ? `The ${off.name} fumble — recovered by ${by}.`
+                : `${loser} fumbles — recovered by ${by}.`;
           }
         }
       } else if (pick === "DOWNS") {
         outcome = "DOWNS";
         shortField[defense] = true;
+        statDrive({ outcome: "DOWNS" });
         if (!fast) text = `Turnover on downs for ${off.name}.`;
       } else {
         outcome = lastInHalf ? "END_HALF" : "PUNT";
+        statDrive({ outcome });
         if (!fast) text = lastInHalf ? `End of half for ${off.name}.` : `Punt, ${off.name}.`;
       }
     }
@@ -409,6 +446,7 @@ export function simulateGame(team1: TeamProfile, team2: TeamProfile, options: Ga
     drives,
     keyMoments,
     teamStats: stats,
+    ...(keeper ? { boxScore: keeper.box } : {}),
   };
 }
 

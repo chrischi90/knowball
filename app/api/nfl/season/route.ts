@@ -31,7 +31,10 @@ export async function POST(req: Request) {
       loadTeamProfile(body.roster, gameMode, name, { requestId }),
       fetchNflLeagueSeason(undefined, { requestId }),
     ]);
-    const result = simulateSeason(profile, league, { seed: randomSeed() });
+    const result = simulateSeason(profile, league, {
+      seed: randomSeed(),
+      homeTeamId: body.roster.TEAM_DEF.teamId,
+    });
     return NextResponse.json({ ...result, team: summarizeProfile(profile), mvp: mvpOf(profile) });
   } catch (e) {
     if (e instanceof RosterError) return NextResponse.json({ error: e.message }, { status: 400 });

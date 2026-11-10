@@ -8,6 +8,20 @@ import type { NflLeagueSeason } from "@/lib/nfl-types";
 import { CAL, estimateMatchup, moveForPointsPerGame, simulateGame, type KeyMoment } from "./game";
 import { profileFromUnits, type TeamProfile } from "./ratings";
 import { createRng, type Rng } from "./rng";
+import { sumBoxes, type TeamBox } from "./stats";
+
+/** NFL single-season records (regular season), for milestone callouts. */
+export const NFL_SEASON_RECORDS = {
+  passYds: { value: 5477, holder: "Peyton Manning (2013)" },
+  passTd: { value: 55, holder: "Peyton Manning (2013)" },
+  rushYds: { value: 2105, holder: "Eric Dickerson (1984)" },
+  rushTd: { value: 28, holder: "LaDainian Tomlinson (2006)" },
+  recYds: { value: 1964, holder: "Calvin Johnson (2012)" },
+  recTd: { value: 23, holder: "Randy Moss (2007)" },
+  sacks: { value: 22.5, holder: "Michael Strahan (2001) / T.J. Watt (2021)" },
+} as const;
+
+export type StatMvp = { name: string; line: string };
 
 export const FINAL_ROUND_NAME = "Super Bowl";
 export const PLAYOFF_ROUNDS = ["Wild Card", "Divisional", "Conference Championship", FINAL_ROUND_NAME] as const;
@@ -81,7 +95,17 @@ export type SeasonResult = {
   playoffResult: PlayoffRoundName | "Champion" | null;
   champion: string;
   milestones: string[];
+  /** Your players' regular-season totals (from the simulated box scores). */
+  seasonStats: TeamBox | null;
+  playoffStats: TeamBox | null;
+  /** Season MVP by simulated production. */
+  statMvp: StatMvp | null;
+  /** Won well short of what the roster "should" have (bad luck, not a weak team). */
+  unlucky: boolean;
 };
+
+/** Wins this far below expected (≈1.5 standard deviations over 17 games) counts as unlucky. */
+export const UNLUCKY_WIN_GAP = 2.5;
 
 /** Turn a real season's points for/against into engine-scale opponent profiles. */
 export function leagueProfiles(league: NflLeagueSeason): LeagueEntry[] {
@@ -175,14 +199,21 @@ export function seedConference(rows: StandingsRow[], divisionOf: (id: string) =>
 export function simulateSeason(
   user: TeamProfile,
   league: NflLeagueSeason,
-  options: { seed: number; expectedWinsSims?: number }
+  options: {
+    seed: number;
+    expectedWinsSims?: number;
+    /** Franchise whose place the user's team takes (their team defense's franchise). Random if absent/unknown. */
+    homeTeamId?: string | null;
+  }
 ): SeasonResult {
   const rng = createRng(options.seed);
   const gameSeed = () => Math.floor(rng.next() * 4294967296);
   const real = leagueProfiles(league);
 
-  // The user's team takes a random team's place in the league.
-  const replaced = real[rng.int(0, real.length - 1)];
+  // The user's team takes its team defense's franchise's place (conference, division, schedule).
+  // Draw the random index either way so seeds stay stable whether or not homeTeamId matches.
+  const randomPick = real[rng.int(0, real.length - 1)];
+  const replaced = real.find((t) => t.id === options.homeTeamId) ?? randomPick;
   const userEntry: LeagueEntry = {
     id: "USER", name: user.name, conference: replaced.conference, division: replaced.division,
     profile: user, isUser: true,
@@ -205,6 +236,8 @@ export function simulateSeason(
   const schedule = buildSchedule(userEntry, teams, rng);
   const byeWeek = rng.int(5, 14);
   const games: SeasonGame[] = [];
+  const regularBoxes: TeamBox[] = [];
+  const playoffBoxes: TeamBox[] = [];
   let expectedWins = 0;
   const vsUser = new Map<string, number>();
   schedule.forEach((g, i) => {
@@ -216,6 +249,7 @@ export function simulateSeason(
     expectedWins += est.team1WinPct + 0.5 * est.tiePct;
     record("USER", result.team1Score, result.team2Score);
     record(g.opponent.id, result.team2Score, result.team1Score);
+    if (result.boxScore) regularBoxes.push(result.boxScore[1]);
     vsUser.set(g.opponent.id, (vsUser.get(g.opponent.id) ?? 0) + 1);
     games.push({
       week, opponentId: g.opponent.id, opponent: g.opponent.name, home: g.home,
@@ -267,6 +301,7 @@ export function simulateSeason(
     const winner = r.winner === 1 ? higher : lower;
     if (userGame) {
       const userIsHigher = higher.row.isUser === true;
+      if (r.boxScore) playoffBoxes.push(r.boxScore[userIsHigher ? 1 : 2]);
       const opp = userIsHigher ? lower : higher;
       const won = winner.row.isUser === true;
       playoffGames.push({
@@ -309,6 +344,14 @@ export function simulateSeason(
   else if (!madePlayoffs) milestones.push("Missed the playoffs");
   if (madePlayoffs && userSeedIndex === 0) milestones.push("Earned the #1 seed and a bye");
 
+  // Compare against the same rounded number the UI shows, so the callout never contradicts it.
+  const shownExpected = Math.round(expectedWins * 10) / 10;
+  const unlucky = userRow.wins + 0.5 * userRow.ties <= shownExpected - UNLUCKY_WIN_GAP;
+  if (unlucky) milestones.unshift(`Unlucky! Expected ${shownExpected.toFixed(1)} wins`);
+
+  const seasonStats = sumBoxes(regularBoxes);
+  if (seasonStats) milestones.push(...statMilestones(seasonStats));
+
   return {
     seed: options.seed,
     season: league.season,
@@ -331,5 +374,68 @@ export function simulateSeason(
     playoffResult,
     champion: champ.row.name,
     milestones,
+    seasonStats,
+    playoffStats: sumBoxes(playoffBoxes),
+    statMvp: seasonStats ? statMvp(seasonStats) : null,
+    unlucky,
   };
+}
+
+const fmt = (n: number) => n.toLocaleString("en-US");
+
+/** Record-breaking and round-number milestones from season totals. */
+export function statMilestones(b: TeamBox): string[] {
+  const R = NFL_SEASON_RECORDS;
+  const out: string[] = [];
+  const check = (value: number, rec: { value: number; holder: string }, what: string) => {
+    if (value > rec.value) out.push(`${what} — broke the record held by ${rec.holder}!`);
+  };
+  check(b.passing.yds, R.passYds, `${b.passing.name}: ${fmt(b.passing.yds)} passing yards`);
+  check(b.passing.td, R.passTd, `${b.passing.name}: ${b.passing.td} TD passes`);
+  for (const r of b.rushing) {
+    check(r.yds, R.rushYds, `${r.name}: ${fmt(r.yds)} rushing yards`);
+    check(r.td, R.rushTd, `${r.name}: ${r.td} rushing TDs`);
+  }
+  for (const r of b.receiving) {
+    check(r.yds, R.recYds, `${r.name}: ${fmt(r.yds)} receiving yards`);
+    check(r.td, R.recTd, `${r.name}: ${r.td} receiving TDs`);
+  }
+  check(b.defense.sacks, R.sacks, `${b.defense.name}: ${b.defense.sacks} sacks`);
+  if (!out.length) {
+    if (b.passing.yds >= 5000) out.push(`${b.passing.name} threw for ${fmt(b.passing.yds)} yards`);
+    const rusher = b.rushing.find((r) => r.yds >= 1500);
+    if (rusher) out.push(`${rusher.name} ran for ${fmt(rusher.yds)} yards`);
+    const thousand = b.receiving.filter((r) => r.yds >= 1000).length;
+    if (thousand >= 2) out.push(`${thousand} 1,000-yard receivers`);
+  }
+  return out;
+}
+
+/** MVP by simulated production (QB-weighted, like the real award). */
+export function statMvp(b: TeamBox): StatMvp {
+  const cands: { name: string; score: number; line: string }[] = [
+    {
+      name: b.passing.name,
+      score: b.passing.yds / 20 + b.passing.td * 5 - b.passing.int * 3,
+      line: `${fmt(b.passing.yds)} yds · ${b.passing.td} TD · ${b.passing.int} INT`,
+    },
+  ];
+  const byName = new Map<string, { rush?: (typeof b.rushing)[number]; rec?: (typeof b.receiving)[number] }>();
+  for (const r of b.rushing) byName.set(r.name, { ...byName.get(r.name), rush: r });
+  for (const r of b.receiving) byName.set(r.name, { ...byName.get(r.name), rec: r });
+  for (const [name, { rush, rec }] of Array.from(byName.entries())) {
+    if (name === b.passing.name) continue;
+    const yds = (rush?.yds ?? 0) + (rec?.yds ?? 0);
+    const td = (rush?.td ?? 0) + (rec?.td ?? 0);
+    const parts = [rush && rush.att > 0 ? `${fmt(rush.yds)} rush yds` : null, rec && rec.rec > 0 ? `${fmt(rec.yds)} rec yds` : null].filter(Boolean);
+    cands.push({ name, score: yds / 10 + td * 6, line: `${parts.join(" · ")} · ${td} TD` });
+  }
+  const d = b.defense;
+  cands.push({
+    name: d.name,
+    score: d.sacks * 9 + d.int * 12 + d.tackles * 0.8 + d.td * 6,
+    line: `${d.tackles} tkl · ${d.sacks} sacks · ${d.int} INT`,
+  });
+  const best = cands.reduce((x, y) => (y.score > x.score ? y : x));
+  return { name: best.name, line: best.line };
 }

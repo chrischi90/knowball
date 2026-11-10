@@ -34,6 +34,16 @@ export type PlayerRating = {
   archetype?: ReceiverArchetype | CaptainArchetype;
 };
 
+/** Real per-game usage, for the box-score layer (stats.ts). Absent for real-league opponents. */
+export type TeamUsage = {
+  qb: { name: string; cmpPct: number; sackRate: number; rushAttPg: number; ypc: number };
+  receivers: { name: string; tgtPg: number; catchRate: number; ypr: number }[];
+  rushers: { name: string; rushAttPg: number; ypc: number }[];
+  captain: { name: string; tacklesPg: number; sacksPg: number; archetype: CaptainArchetype };
+  teamSacksPg: number;
+  leagueCatchRate: number;
+};
+
 export type TeamProfile = {
   name: string;
   /** Passing unit strength (QB × receivers, plus play-action). */
@@ -53,6 +63,9 @@ export type TeamProfile = {
   /** Pass rush (pressures → sacks, rushed throws). */
   passRush: number;
   players: PlayerRating[];
+  usage?: TeamUsage;
+  /** Real-league opponent with no individual players (season mode): narrate at team level. */
+  generic?: boolean;
   /** Weights used to attribute TDs/turnovers to players in key moments. */
   attribution: {
     receivers: { name: string; weight: number }[];
@@ -264,6 +277,7 @@ export function buildTeamProfile(roster: NflSimRoster): TeamProfile {
   ];
 
   const k = RATING_SCALE;
+  const usage = buildUsage(roster, captain.archetype);
   return {
     name: roster.name,
     pass: k * pass,
@@ -274,6 +288,7 @@ export function buildTeamProfile(roster: NflSimRoster): TeamProfile {
     runDef: k * runDef,
     takeaway: k * takeaway,
     passRush: k * passRush,
+    usage,
     players: [
       { name: roster.QB.name, slot: "QB", value: qb.pass },
       { name: roster.RB.name, slot: "RB", value: rb.rush },
@@ -294,6 +309,50 @@ export function buildTeamProfile(roster: NflSimRoster): TeamProfile {
   };
 }
 
+function buildUsage(roster: NflSimRoster, archetype: CaptainArchetype): TeamUsage {
+  const ratio = (n: number | null | undefined, d: number | null | undefined, fallback: number) =>
+    n != null && d != null && d > 0 ? n / d : fallback;
+  const anyLeagueRec = [roster.WR1, roster.WR2, roster.WR3, roster.TE].map((p) => p.stats.league.receiving).find(Boolean);
+  const leagueCatchRate = ratio(anyLeagueRec?.rec, anyLeagueRec?.tgt, 0.65);
+  // Volume = half role, half real usage: whoever starts at WR1 gets WR1-type targets even if he
+  // was a backup on his real team, while stars still earn more. Efficiency stays fully his own.
+  const realTgt = (p: NflSimPlayer) => {
+    const r = p.stats.receiving;
+    return r ? r.tgt ?? r.rec / 0.62 : 0; // targets untracked 2003-2008
+  };
+  const receiver = (p: NflSimPlayer, roleTgt: number) => {
+    const r = p.stats.receiving;
+    const tgt = realTgt(p);
+    return {
+      name: p.name,
+      tgtPg: Math.max(0.5, 0.5 * roleTgt + 0.5 * tgt),
+      catchRate: r ? ratio(r.rec, tgt, leagueCatchRate) : leagueCatchRate * 0.9,
+      ypr: r ? ratio(r.yds, r.rec, 10) : 9,
+    };
+  };
+  // WR roles go by real volume: the busiest receiver plays the WR1 role.
+  const wrs = [roster.WR1, roster.WR2, roster.WR3].sort((a, b) => realTgt(b) - realTgt(a));
+  const WR_ROLE_TARGETS = [8.5, 6.5, 5];
+  const qbPass = roster.QB.stats.passing;
+  const qbRush = roster.QB.stats.rushing;
+  const rb = roster.RB.stats.rushing;
+  const capt = roster.DEF_CAPTAIN.stats.defense;
+  return {
+    qb: {
+      name: roster.QB.name,
+      cmpPct: ratio(qbPass?.cmp, qbPass?.att, 0.6),
+      sackRate: ratio(qbPass?.sacked, qbPass ? qbPass.att + qbPass.sacked : 0, 0.07),
+      rushAttPg: qbRush?.att ?? 2,
+      ypc: ratio(qbRush?.yds, qbRush?.att, 4),
+    },
+    receivers: [...wrs.map((w, i) => receiver(w, WR_ROLE_TARGETS[i])), receiver(roster.TE, 5.5), receiver(roster.RB, 3.5)],
+    rushers: [{ name: roster.RB.name, rushAttPg: 0.5 * 16 + 0.5 * (rb?.att ?? 0), ypc: ratio(rb?.yds, rb?.att, 3.8) }],
+    captain: { name: roster.DEF_CAPTAIN.name, tacklesPg: capt?.tackles ?? 3, sacksPg: capt?.sacks ?? 0.2, archetype },
+    teamSacksPg: roster.TEAM_DEF.sacks ?? 2.4,
+    leagueCatchRate,
+  };
+}
+
 /**
  * Profile for a real NFL team from its actual points for/against (season-mode opponents and
  * the backtest). offense/defense are already on the engine's scale (see calibrateUnitFromPoints).
@@ -310,14 +369,15 @@ export function profileFromUnits(name: string, offense: number, defense: number)
     takeaway: 0,
     passRush: 0,
     players: [],
+    generic: true,
     attribution: {
       receivers: [{ name: `${name} receiver`, weight: 1 }],
       qbName: `${name} QB`,
       rbName: `${name} RB`,
       qbRushShare: 0.15,
-      captainName: `${name} defense`,
+      captainName: name,
       captainArchetype: "runStop",
-      defenseName: `${name} defense`,
+      defenseName: name,
     },
   };
 }
