@@ -180,3 +180,23 @@ def test_weighted_league_line_weights_by_player_games():
     assert out["pass_yds"] == 215.0          # (200*15 + 260*5) / 20
     assert out["rec_tgt"] == 8.0             # only the tracked season counts
     assert r.weighted_league_line({}, {2004: 1})["rec_tgt"] is None
+
+
+def test_summary_line_by_position():
+    qb = r.summary_line("QB", {"gp": 16, "pass_yds": 4800, "pass_td": 40, "pass_int": 8})
+    assert qb == {"gp": 16, "stats": [{"label": "YDS", "value": 300.0}, {"label": "TD", "value": 2.5}, {"label": "INT", "value": 0.5}]}
+    rb = r.summary_line("RB", {"gp": 10, "rush_yds": 1000, "rush_td": 8, "rec_td": 2, "fumbles_lost": 1})
+    assert [s["value"] for s in rb["stats"]] == [100.0, 1.0, 0.1]
+    wr = r.summary_line("TE", {"gp": 17, "rec": 85, "rec_yds": 1020, "rec_td": 8.5})
+    assert [s["label"] for s in wr["stats"]] == ["REC", "YDS", "TD"]
+    lb = r.summary_line("LB", {"gp": 17, "def_tackles": 120, "def_sacks": 8.5, "def_int": 2, })
+    assert [s["label"] for s in lb["stats"]] == ["TKL", "SACK", "INT"]
+    assert r.summary_line("QB", {"gp": 0}) is None
+    assert r.summary_line("QB", {}) is None
+
+
+def test_defense_season_score_is_era_relative():
+    # 17 PA in a 23-PA league beats 16 PA in a 19-PA league.
+    assert r.defense_season_score(17, 1.5, 23, 1.4) > r.defense_season_score(16, 1.5, 19, 1.4)
+    # Takeaways matter.
+    assert r.defense_season_score(18, 2.5, 22, 1.5) > r.defense_season_score(18, 1.0, 22, 1.5)

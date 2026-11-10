@@ -209,3 +209,15 @@ describe("getNflSeasonContext", () => {
     });
   });
 });
+
+describe("nameMatchRank", () => {
+  it("prefers first-name prefix, then last-name prefix, then substring", async () => {
+    const { nameMatchRank } = await import("./nfl-types");
+    expect(nameMatchRank("Tom Brady", "to")).toBe(0);
+    expect(nameMatchRank("LaDainian Tomlinson", "to")).toBe(1);
+    expect(nameMatchRank("Antonio Brown", "to")).toBe(2);
+    expect(nameMatchRank("Ja'Marr Chase", "ma")).toBe(1);
+    expect(nameMatchRank("Tom Brady", "xyz")).toBe(-1);
+    expect(nameMatchRank("Tom Brady", "")).toBe(-1);
+  });
+});

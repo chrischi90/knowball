@@ -85,6 +85,10 @@ export type NflPlayer = {
   position: NflPosition; // primary position (players with non-game positions are excluded)
   jersey: string;
   isRookie: boolean; // true → stats may be a Madden-based projection before week 10
+  /** Three per-game headline stats for the draft dropdown (same seasons the sim uses). */
+  summary: { gp: number; stats: { label: string; value: number }[] } | null;
+  /** Madden overall for current rookies (active_only), else null. */
+  maddenOverall: number | null;
 };
 
 export type NflStatSource = "db" | "scrape" | "projection";
@@ -161,10 +165,18 @@ export type NflPlayerStats = {
 /** GET /nfl/teams/{teamId}/defense/seasons → { seasons: NflTeamSeason[] } (NFL_ALL_TIME_START_SEASON+, newest first) */
 export type NflTeamSeason = {
   season: number;
-  teamName: string; // name that season, e.g. "Houston Oilers"
+  teamName: string; // name that season, e.g. "Oakland Raiders"
   wins: number;
   losses: number;
   ties: number;
+  games: number;
+  pointsAllowedPerGame: number;
+  takeawaysPerGame: number;
+  sacksPerGame: number | null;
+  /** Era-relative defense quality (vs that season's league). */
+  score: number;
+  /** The franchise's best defensive season (default pick in all-time mode). */
+  best: boolean;
 };
 
 /** GET /nfl/teams/{teamId}/defense?season= → NflTeamDefense (per game) */
@@ -254,3 +266,16 @@ export const validateTeamDefensePick = rules.validateTeamDefensePick as (args: {
 }) => string | null;
 
 export const getNflSeasonContext = rules.getNflSeasonContext as (now?: Date) => NflSeasonContext;
+
+/**
+ * Rank a name against a search query for type-ahead: first-name prefix, then last-name
+ * (any later word) prefix, then substring. Lower is better; -1 = no match.
+ */
+export function nameMatchRank(name: string, query: string): number {
+  const n = name.toLowerCase();
+  const q = query.trim().toLowerCase();
+  if (!q || !n.includes(q)) return -1;
+  if (n.startsWith(q)) return 0;
+  if (n.split(/[\s.'-]+/).some((w, i) => i > 0 && w.startsWith(q))) return 1;
+  return 2;
+}

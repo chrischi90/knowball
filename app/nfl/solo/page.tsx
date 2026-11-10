@@ -241,6 +241,7 @@ export default function NflSoloPage() {
               onPickPlayer={handlePickPlayer}
               onLockDefense={handleLockDefense}
               onRespin={clearWheel}
+              defenseSetsDivision
             />
           </div>
         )}

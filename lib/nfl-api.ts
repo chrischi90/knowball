@@ -25,6 +25,12 @@ export class NflServiceError extends Error {
   }
 }
 
+/**
+ * Bump when a cached response's shape changes, so new code never reads responses cached
+ * by an older deploy (fetch cache can outlive a deploy). v2: dropdown stats, best defense.
+ */
+const CACHE_VERSION = "2";
+
 const TEAM_ID_RE = /^[A-Z]{2,3}$/;
 const PLAYER_ID_RE = /^[A-Za-z0-9-]{1,20}$/;
 
@@ -73,7 +79,7 @@ export function fetchNflTeams(ctx?: FetchContext) {
 export function fetchNflTeamPlayers(teamId: string, gameMode: NflGameMode, ctx?: FetchContext) {
   // Current rosters change during the season; refresh hourly.
   return get<{ players: NflPlayer[] }>(
-    `/teams/${teamId}/players?game_mode=${gameMode}`,
+    `/teams/${teamId}/players?game_mode=${gameMode}&v=${CACHE_VERSION}`,
     HOUR,
     ctx
   );
@@ -90,7 +96,7 @@ export function fetchNflPlayerStats(
 }
 
 export function fetchNflDefenseSeasons(teamId: string, ctx?: FetchContext) {
-  return get<{ seasons: NflTeamSeason[] }>(`/teams/${teamId}/defense/seasons`, 24 * HOUR, ctx);
+  return get<{ seasons: NflTeamSeason[] }>(`/teams/${teamId}/defense/seasons?v=${CACHE_VERSION}`, 24 * HOUR, ctx);
 }
 
 export function fetchNflTeamDefense(teamId: string, season?: number, ctx?: FetchContext) {

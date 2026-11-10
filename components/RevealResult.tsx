@@ -7,6 +7,9 @@ import { POSITIONS } from "@/lib/game-types";
 import type { TeamFitDiagnostics } from "@/lib/game-types";
 import { buildShareUrl, encodeSoloShareData } from "@/lib/share-utils";
 
+/** Wins this far below expected over 82 games (≈1.5 SD) is called out as unlucky. */
+const NBA_UNLUCKY_WIN_GAP = 6.5;
+
 type MvpData = {
   playerName: string;
   position: string;
@@ -356,6 +359,12 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
                 <span className="text-3xl text-zinc-500">–</span>
                 <span className="text-6xl font-bold text-red-400">{losses}</span>
               </div>
+              {/* ~1.5 standard deviations below expected over 82 games = bad luck, not a weak team. */}
+              {typeof expectedWinsBlended === "number" && wins <= Math.round(expectedWinsBlended * 10) / 10 - NBA_UNLUCKY_WIN_GAP && (
+                <p className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-amber-600/60 bg-amber-900/30 px-3 py-1 text-sm text-amber-200">
+                  😬 Unlucky! This roster was expected to win {expectedWinsBlended.toFixed(1)} games
+                </p>
+              )}
               <p className="text-xs text-zinc-600 mt-3">Team Power: {teamPower}</p>
               {typeof regularSeasonWinProbability === "number" && (
                 <p className="text-xs text-zinc-600 mt-1">
@@ -448,13 +457,13 @@ export function RevealResult({ result, roster, onPlayAgain }: Props) {
                       <button
                         type="button"
                         aria-label="Explain lineup mesh metrics"
-                        className="h-5 w-5 rounded-full border border-zinc-500/60 text-zinc-300 text-[11px] leading-none hover:border-zinc-300 hover:text-white focus:outline-none focus:ring-2 focus:ring-orange-500/70"
+                        className="h-5 w-5 rounded-full border border-zinc-500/60 text-zinc-300 text-[0.775rem] leading-none hover:border-zinc-300 hover:text-white focus:outline-none focus:ring-2 focus:ring-orange-500/70"
                       >
                         i
                       </button>
                       <div
                         role="tooltip"
-                        className="pointer-events-none absolute right-0 z-[120] mt-2 hidden w-80 rounded-md border border-zinc-700 bg-zinc-900 p-3 text-[11px] text-zinc-200 shadow-xl group-hover:block group-focus-within:block"
+                        className="pointer-events-none absolute right-0 z-[120] mt-2 hidden w-80 rounded-md border border-zinc-700 bg-zinc-900 p-3 text-[0.775rem] text-zinc-200 shadow-xl group-hover:block group-focus-within:block"
                       >
                         <p className="mb-2 text-zinc-100 font-medium">How to read these values</p>
                         <ul className="space-y-1.5 text-zinc-300">

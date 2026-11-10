@@ -179,9 +179,9 @@ export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, my
   const displayTeams = teams;
   const wheelSize = 384;
   const radius = wheelSize / 2;
-  // 30 NBA teams keep the original layout; denser wheels (32 NFL teams) push labels out and
-  // shrink them slightly so neighbors at the top/bottom don't collide.
-  const dense = displayTeams.length > 30;
+  // Push labels out and shrink them slightly so neighbors at the top/bottom of the wheel
+  // (where 3-letter labels sit side by side) don't collide — NBA (30) and NFL (32).
+  const dense = displayTeams.length >= 30;
   const labelRadius = radius * (dense ? 0.72 : 0.65); // Slightly smaller to avoid center button
 
   return (
@@ -268,9 +268,18 @@ export function Wheel({ teams, currentTeamId, isMyTurn, isActiveTurn, gameId, my
           disabled={!isMyTurn || spinning}
           className="absolute inset-0 flex items-center justify-center z-10"
         >
-          <div className={`w-20 h-20 rounded-full shadow-lg flex items-center justify-center font-semibold text-white text-sm transition touch-manipulation ${!isMyTurn || spinning ? "bg-zinc-600 opacity-70 cursor-not-allowed" : "bg-orange-600 hover:bg-orange-500"}`}
-               style={{ pointerEvents: !isMyTurn || spinning ? "none" : "auto" }}>
-            {spinning ? "Spinning…" : "Spin"}
+          <div className="relative w-20 h-20">
+            {/* Throbbing underglow: prompts the user that Spin is their next move. */}
+            {isMyTurn && !spinning && (
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-0 rounded-full motion-safe:animate-spin-glow motion-reduce:shadow-[0_0_18px_6px_rgba(251,146,60,0.55)]"
+              />
+            )}
+            <div className={`relative w-20 h-20 rounded-full shadow-lg flex items-center justify-center font-semibold text-white text-sm transition touch-manipulation ${!isMyTurn || spinning ? "bg-zinc-600 opacity-70 cursor-not-allowed" : "bg-orange-600 hover:bg-orange-500"}`}
+                 style={{ pointerEvents: !isMyTurn || spinning ? "none" : "auto" }}>
+              {spinning ? "Spinning…" : "Spin"}
+            </div>
           </div>
         </button>
         

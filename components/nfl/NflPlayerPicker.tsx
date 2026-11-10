@@ -6,6 +6,7 @@ import {
   NFL_SLOT_LABELS,
   eligibleSlotsFor,
   isSlotFilled,
+  nameMatchRank,
   type NflPlayer,
   type NflPlayerSlot,
   type NflRoster,
@@ -13,6 +14,15 @@ import {
   type NflTeamSeason,
 } from "@/lib/nfl-types";
 import type { NflGameMode } from "@/lib/nfl-client";
+
+const MIN_QUERY = 2;
+
+/** "283.4 YDS · 2.1 TD · 0.7 INT" (per game), or the rookie's Madden rating. */
+function statLine(p: NflPlayer): string | null {
+  if (p.summary) return p.summary.stats.map((s) => `${s.value} ${s.label}`).join(" · ") + " /g";
+  if (p.maddenOverall) return `Madden ${p.maddenOverall} OVR`;
+  return null;
+}
 
 type Props = {
   teamId: string;
@@ -25,6 +35,8 @@ type Props = {
   onPickPlayer: (slot: NflPlayerSlot, player: NflPlayer) => void;
   onLockDefense: (season: number) => void;
   onRespin?: () => void;
+  /** Solo season: the defense's franchise decides which division your team plays in. */
+  defenseSetsDivision?: boolean;
 };
 
 /**
@@ -41,6 +53,7 @@ export function NflPlayerPicker({
   onPickPlayer,
   onLockDefense,
   onRespin,
+  defenseSetsDivision = false,
 }: Props) {
   const [players, setPlayers] = useState<NflPlayer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,7 +98,8 @@ export function NflPlayerPicker({
         .then((d) => {
           const seasons: NflTeamSeason[] = Array.isArray(d.seasons) ? d.seasons : [];
           setDefenseSeasons(seasons);
-          setDefenseSeason(seasons[0]?.season ?? null);
+          // Default to the franchise's best defensive season.
+          setDefenseSeason((seasons.find((x) => x.best) ?? seasons[0])?.season ?? null);
         })
         .catch(() => setDefenseSeasons([]));
     }
@@ -93,11 +107,20 @@ export function NflPlayerPicker({
 
   const openSlots = NFL_PLAYER_SLOTS.filter((s) => !isSlotFilled(roster, s));
   const available = useMemo(() => players.filter((p) => !takenPlayerIds.includes(p.id)), [players, takenPlayerIds]);
+  const slotsFor = (p: NflPlayer) => eligibleSlotsFor(p.position).filter((s) => openSlots.includes(s));
+  // Only players who fit one of your open slots.
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return q.length >= 3 ? available.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 25) : [];
-  }, [available, query]);
-  const slotsFor = (p: NflPlayer) => eligibleSlotsFor(p.position).filter((s) => openSlots.includes(s));
+    if (q.length < MIN_QUERY) return [];
+    // Best name matches first; among equals, the more established player (more games).
+    return available
+      .map((p) => ({ p, rank: nameMatchRank(p.name, q) }))
+      .filter(({ p, rank }) => rank >= 0 && slotsFor(p).length > 0)
+      .sort((a, b) => a.rank - b.rank || (b.p.summary?.gp ?? 0) - (a.p.summary?.gp ?? 0) || a.p.name.localeCompare(b.p.name))
+      .slice(0, 25)
+      .map(({ p }) => p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [available, query, openSlots.join(",")]);
   const selectedSlots = selected ? slotsFor(selected) : [];
 
   // Respin only when there's genuinely nothing to do with this team.
@@ -163,18 +186,18 @@ export function NflPlayerPicker({
           <div className="relative">
             <input
               type="text"
-              placeholder="Type a player's name (3+ letters)…"
+              placeholder="Type a player's name…"
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
                 setActiveIndex(0);
-                setOpen(e.target.value.trim().length >= 3);
+                setOpen(e.target.value.trim().length >= MIN_QUERY);
                 if (selected && e.target.value !== selected.name) {
                   setSelected(null);
                   setSlot(null);
                 }
               }}
-              onFocus={() => query.trim().length >= 3 && setOpen(true)}
+              onFocus={() => query.trim().length >= MIN_QUERY && setOpen(true)}
               onBlur={() => setOpen(false)}
               onKeyDown={onKeyDown}
               className="w-full py-3 px-4 rounded-md bg-zinc-800 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-orange-500"
@@ -182,7 +205,7 @@ export function NflPlayerPicker({
             {open && matches.length > 0 && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-800 rounded-md border border-zinc-700 max-h-56 overflow-y-auto z-50">
                 {matches.map((p, i) => {
-                  const fits = slotsFor(p).length > 0;
+                  const line = statLine(p);
                   return (
                     <button
                       key={p.id}
@@ -200,14 +223,16 @@ export function NflPlayerPicker({
                           {p.position}
                         </span>
                       </div>
-                      {!fits && <div className="text-xs opacity-60">No open {p.position} slot</div>}
+                      {line && <div className="text-xs opacity-75 tabular-nums mt-0.5">{line}</div>}
                     </button>
                   );
                 })}
               </div>
             )}
-            {open && query.trim().length >= 3 && matches.length === 0 && (
-              <p className="mt-2 text-xs text-zinc-500">No match on the {teamName}{gameMode === "active_only" ? " current roster" : ""}.</p>
+            {open && query.trim().length >= MIN_QUERY && matches.length === 0 && (
+              <p className="mt-2 text-xs text-zinc-500">
+                No {teamName}{gameMode === "active_only" ? " (current roster)" : ""} player by that name fits your open slots.
+              </p>
             )}
           </div>
 
@@ -216,6 +241,7 @@ export function NflPlayerPicker({
               <div className="p-3 rounded-md bg-zinc-800 border border-orange-500 text-sm">
                 <span className="font-medium text-white">{selected.name}</span>
                 <span className="text-zinc-400"> · {selected.position}</span>
+                {statLine(selected) && <div className="text-xs text-zinc-400 tabular-nums mt-0.5">{statLine(selected)}</div>}
                 {selected.isRookie && (
                   <span className="ml-2 text-xs text-sky-300">Rookie — stats projected until week 10</span>
                 )}
@@ -254,7 +280,11 @@ export function NflPlayerPicker({
         <div className="border-t border-zinc-800 pt-4">
           <p className="text-sm text-zinc-400 mb-2">
             Or lock in the <span className="text-white font-medium">{teamName}</span> as your team defense
+            {defenseSetsDivision && <span className="block text-xs text-zinc-500 mt-0.5">Your team will play in their division.</span>}
           </p>
+          {gameMode === "all_time" && !defenseBlocked && (
+            <p className="text-xs text-zinc-500 mb-2">★ = best defense in franchise history (per game, vs. that season&apos;s league)</p>
+          )}
           {defenseBlocked ? (
             <p className="text-sm text-zinc-500">Your opponent already locked the {teamName} defense.</p>
           ) : gameMode === "active_only" ? (
@@ -276,7 +306,8 @@ export function NflPlayerPicker({
               >
                 {defenseSeasons.map((s) => (
                   <option key={s.season} value={s.season}>
-                    {s.season} · {s.wins}-{s.losses}{s.ties ? `-${s.ties}` : ""}
+                    {s.best ? "★ " : ""}{s.season} · {s.wins}-{s.losses}{s.ties ? `-${s.ties}` : ""} · {s.pointsAllowedPerGame} PA · {s.takeawaysPerGame} TO
+                    {s.sacksPerGame != null ? ` · ${s.sacksPerGame} SK` : ""}
                     {s.teamName !== teamName ? ` (${s.teamName})` : ""}
                   </option>
                 ))}

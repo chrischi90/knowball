@@ -154,6 +154,41 @@ def league_per_game_from_rows(rows: List[dict], position: str) -> dict:
     return line
 
 
+SUMMARY_COLUMNS = ["gp", "pass_yds", "pass_td", "pass_int", "rush_yds", "rush_td", "fumbles_lost",
+                   "rec", "rec_yds", "rec_td", "def_tackles", "def_sacks", "def_int"]
+
+
+def summary_line(position: str, t: dict) -> Optional[dict]:
+    """
+    Three per-game headline stats for the draft dropdown, by position. t = summed totals over
+    the same seasons the sim uses (team stint for all_time, stats season for active_only).
+    """
+    gp = t.get("gp") or 0
+    if gp <= 0:
+        return None
+    pg = lambda col: round((t.get(col) or 0) / gp, 1)  # noqa: E731
+    if position == "QB":
+        stats = [("YDS", pg("pass_yds")), ("TD", pg("pass_td")), ("INT", pg("pass_int"))]
+    elif position == "RB":
+        td = round(((t.get("rush_td") or 0) + (t.get("rec_td") or 0)) / gp, 1)
+        stats = [("YDS", pg("rush_yds")), ("TD", td), ("FUM", pg("fumbles_lost"))]
+    elif position in ("WR", "TE"):
+        stats = [("REC", pg("rec")), ("YDS", pg("rec_yds")), ("TD", pg("rec_td"))]
+    elif position in DEFENSIVE_POSITIONS:
+        stats = [("TKL", pg("def_tackles")), ("SACK", pg("def_sacks")), ("INT", round((t.get("def_int") or 0) / gp, 2))]
+    else:
+        return None
+    return {"gp": int(gp), "stats": [{"label": k, "value": v} for k, v in stats]}
+
+
+def defense_season_score(pa: float, takeaways: float, lg_pa: float, lg_takeaways: float) -> float:
+    """
+    Era-fair defense quality for picking a franchise's best season: points allowed and
+    takeaways per game relative to that season's league (≈4 pts/g ~ 1 takeaway/g).
+    """
+    return (lg_pa - pa) + 2.0 * (takeaways - lg_takeaways)
+
+
 # ---------------------------------------------------------------------------
 # Rookie projection
 # ---------------------------------------------------------------------------
@@ -352,8 +387,36 @@ def create_nfl_router(get_db: Callable, release_db: Callable) -> APIRouter:
                     """,
                     (team_id, team_id, NFL_ALL_TIME_START_SEASON),
                 )
-            players = [{"id": r["player_id"], "name": r["player_name"], "position": r["position"],
-                        "jersey": r["jersey"] or "", "isRookie": bool(r["is_rookie"])} for r in rows]
+            # Headline stats for the dropdown, from the same seasons the sim will use.
+            sums = ", ".join(f"SUM({c}) AS {c}" for c in SUMMARY_COLUMNS)
+            if game_mode == "active_only":
+                ids = [r["player_id"] for r in rows]
+                agg = query(
+                    f"SELECT player_id, {sums} FROM nfl_player_season_stats "
+                    f"WHERE season = %s AND player_id = ANY(%s) GROUP BY player_id",
+                    (ctx["statsSeason"], ids),
+                ) if ids else []
+                madden = {r["player_id"]: r["madden_overall"] for r in query(
+                    "SELECT player_id, madden_overall FROM nfl_rookie_profiles WHERE season = %s AND team_id = %s",
+                    (ctx["rosterSeason"], team_id),
+                )}
+            else:
+                agg = query(
+                    f"SELECT player_id, {sums} FROM nfl_player_season_stats "
+                    f"WHERE team_id = %s AND season >= %s GROUP BY player_id",
+                    (team_id, NFL_ALL_TIME_START_SEASON),
+                )
+                madden = {}
+            totals = {a["player_id"]: a for a in agg}
+            players = []
+            for r in rows:
+                pid = r["player_id"]
+                players.append({
+                    "id": pid, "name": r["player_name"], "position": r["position"],
+                    "jersey": r["jersey"] or "", "isRookie": bool(r["is_rookie"]),
+                    "summary": summary_line(r["position"], totals.get(pid, {})),
+                    "maddenOverall": madden.get(pid),
+                })
             players.sort(key=lambda p: p["name"])
             return players or None
 
@@ -520,16 +583,36 @@ def create_nfl_router(get_db: Callable, release_db: Callable) -> APIRouter:
         def load():
             rows = query(
                 """
-                SELECT ts.season, ts.team_name, ts.wins, ts.losses, ts.ties
+                WITH lg AS (
+                  SELECT season, SUM(points_allowed)::float / SUM(games) AS pa,
+                         SUM(interceptions + fumbles_recovered)::float / SUM(games) AS tk
+                  FROM nfl_team_defense_season_stats GROUP BY season
+                )
+                SELECT ts.season, ts.team_name, ts.wins, ts.losses, ts.ties, d.games,
+                       d.points_allowed::float / d.games AS pa,
+                       (d.interceptions + d.fumbles_recovered)::float / d.games AS tk,
+                       d.sacks::float / d.games AS sk, lg.pa AS lg_pa, lg.tk AS lg_tk
                 FROM nfl_team_seasons ts
                 JOIN nfl_team_defense_season_stats d USING (team_id, season)
-                WHERE ts.team_id = %s AND ts.season >= %s
+                JOIN lg USING (season)
+                WHERE ts.team_id = %s AND ts.season >= %s AND d.games > 0
                 ORDER BY ts.season DESC
                 """,
                 (team_id, NFL_ALL_TIME_START_SEASON),
             )
-            return [{"season": r["season"], "teamName": r["team_name"], "wins": r["wins"],
-                     "losses": r["losses"], "ties": r["ties"]} for r in rows] or None
+            seasons = [{
+                "season": r["season"], "teamName": r["team_name"], "wins": r["wins"], "losses": r["losses"],
+                "ties": r["ties"], "games": r["games"],
+                "pointsAllowedPerGame": round(r["pa"], 1), "takeawaysPerGame": round(r["tk"], 1),
+                "sacksPerGame": None if r["sk"] is None else round(r["sk"], 1),
+                "score": round(defense_season_score(r["pa"], r["tk"], r["lg_pa"], r["lg_tk"]), 2),
+                "best": False,
+            } for r in rows]
+            # Best = highest era-adjusted score among seasons with enough games to trust.
+            eligible = [x for x in seasons if x["games"] >= 8] or seasons
+            if eligible:
+                max(eligible, key=lambda x: x["score"])["best"] = True
+            return seasons or None
         seasons = db_call(lambda: cached(f"defseasons:{team_id}", load))
         if not seasons:
             raise HTTPException(status_code=404, detail=f"No defense data for team_id={team_id}")
